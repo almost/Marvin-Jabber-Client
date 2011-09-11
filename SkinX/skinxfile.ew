@@ -1,0 +1,182 @@
+-- skinxfile.ew
+-- File Reading Routines for SKINX
+-- Provides transparent access to files whether they're in a directory or a zip file
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include unzip.e
+include file.e
+include machine.e
+
+global constant SKINXFILE_ERR_SKINDIRNOTFOUND = -1,
+                SKINXFILE_ERR_SKINNOTFOUND    = -2,
+                SKINXFILE_ERR_FILENOTFOUND    = -3,
+                SKINXFILE_ERR_CORRUPTZIP      = -4
+                
+constant VALID_ZIP_EXTENSIONS = {"zip","msz"}
+
+-- From Davi Figueiredo's unzip.e
+function file_size(atom file_number)
+    -- Gets the file size.
+    atom lof,current_position
+    current_position=where(file_number)
+
+    if seek(file_number,-1) then
+        return -1
+    end if
+
+    lof=where(file_number)
+    if seek(file_number,current_position) then
+        return -1
+    end if
+    return lof
+
+end function
+
+function ReadFile(sequence filename)
+    atom fn,len
+    sequence file
+    -- Open the file
+    fn = open(filename,"rb")
+    if fn = -1 then
+        return -1
+    end if
+    -- Get the file length
+    len = file_size(fn)
+    if len = -1 then
+        return -1
+    end if
+    file = get_bytes(fn,len)
+    close(fn)
+    return file
+end function
+
+function FilenameFromPath(sequence path)
+    for i = length(path) to 1 by -1 do
+        if path[i] = '/' then
+            return path[i+1..length(path)]
+        end if
+    end for
+    return path
+end function
+
+-- Returns a sequence on success or a negative number on failure
+global function skinxfile_Read(sequence skindir, sequence skin, sequence filename)
+    object skinlist,file,zipcontents
+    
+    if skindir[length(skindir)] != '\\' then
+        skindir = skindir & '\\'
+    end if
+    skin = lower(skin)
+    
+    skinlist = dir(skindir)
+    
+    -- Check if the skin directory exists
+    if atom(skinlist) then
+        return SKINXFILE_ERR_SKINDIRNOTFOUND
+    end if
+    
+    -- Search through the directory listing for the correct file
+    for i = 1 to length(skinlist) do
+        if find('d',skinlist[i][D_ATTRIBUTES]) then
+            if equal(lower(skinlist[i][D_NAME]),skin) then
+                -- Found a directory with the correct name for the skin
+                -- Read in the file
+                file = ReadFile(skindir&skin&"\\"&filename)
+                if atom(file) then
+                    return SKINXFILE_ERR_FILENOTFOUND
+                else
+                    return file
+                end if
+            end if
+        else
+            -- See if this filename matches the skin name plus one of the valid zip extensions
+            for e = 1 to length(VALID_ZIP_EXTENSIONS) do
+                if equal(lower(skinlist[i][D_NAME]),skin&"."&VALID_ZIP_EXTENSIONS[e]) then
+                    -- Found a zip file with the correct name for the skin
+                    zipcontents = open_zip(skindir&skinlist[i][D_NAME]) 
+                    if zipcontents[1] != 0 then
+                        return SKINXFILE_ERR_CORRUPTZIP
+                    else
+                        zipcontents = zipcontents[2]
+                        -- Find the file in the zipcontents
+                        for z = 1 to length(zipcontents) do
+                            if equal(lower(FilenameFromPath(zipcontents[z][Z_NAME])),lower(filename)) then
+                                file = unzip_file(zipcontents[z][Z_NAME])
+                                if file[1] != 0 then
+                                    return SKINXFILE_ERR_CORRUPTZIP
+                                else
+                                    return file[2]
+                                end if
+                            end if
+                        end for
+                        return SKINXFILE_ERR_FILENOTFOUND
+                    end if
+                end if
+            end for
+        end if
+    end for
+    return SKINXFILE_ERR_SKINNOTFOUND
+end function
+
+global function skinxfile_List(sequence skindir)
+    object dirlist
+    sequence skinlist
+    
+    if skindir[length(skindir)] != '\\' then
+        skindir = skindir & '\\'
+    end if
+    
+    dirlist = dir(skindir)
+    
+    -- Check if the skin directory exists
+    if atom(dirlist) then
+        return {}
+    end if
+    
+    skinlist = {}
+    
+    -- Search through the directory listing directorys and files ending in the valid zip extensions
+    for i = 1 to length(dirlist) do
+        if find('d',dirlist[i][D_ATTRIBUTES]) then
+            if sequence(dir(skindir&"\\"&dirlist[i][D_NAME]&"\\skin.xml")) then
+                if not find(lower(dirlist[i][D_NAME]),lower(skinlist)) then
+                    skinlist = append(skinlist,dirlist[i][D_NAME])
+                end if
+            end if
+        else
+            for e = 1 to length(VALID_ZIP_EXTENSIONS) do
+                if length(dirlist[i][D_NAME]) > length(VALID_ZIP_EXTENSIONS[e])+1 then
+                    if equal("."&VALID_ZIP_EXTENSIONS[e],
+                       lower(dirlist[i][D_NAME][length(dirlist[i][D_NAME])-length(VALID_ZIP_EXTENSIONS[e])..length(dirlist[i][D_NAME])])) then
+                        if not find(lower(dirlist[i][D_NAME][1..length(dirlist[i][D_NAME])-length(VALID_ZIP_EXTENSIONS[e])-1]),lower(skinlist)) then
+                            skinlist = append(skinlist,dirlist[i][D_NAME][1..length(dirlist[i][D_NAME])-length(VALID_ZIP_EXTENSIONS[e])-1])
+                        end if
+                    end if
+                end if
+            end for
+        end if
+    end for
+    return skinlist
+end function

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+DOCUMENT TYPE DEFINITION FOR SKINX SKIN FILES
+Version: Prerelease 1
+Date: 22/June/2001
+Author: Thomas Parslow
+
+-->
+<!ELEMENT skin (about?, (window | resource | menu)*)>
+<!ATTLIST skin
+	name CDATA #REQUIRED
+>
+<!ELEMENT about (displayname?, descr?, author?, email?, web?)>
+<!ELEMENT displayname (#PCDATA)>
+<!ELEMENT descr (#PCDATA)>
+<!ELEMENT author (#PCDATA)>
+<!ELEMENT email (#PCDATA)>
+<!ELEMENT web (#PCDATA)>
+<!ELEMENT window (title?, icon?, bounds?, area)>
+<!ATTLIST window
+	name CDATA #REQUIRED
+>
+<!-- The title element is no longer used and if it is included it will be ignored -->
+<!ELEMENT title (#PCDATA)>
+<!ELEMENT icon (#PCDATA)>
+<!ELEMENT bounds EMPTY>
+<!ATTLIST bounds
+	minwidth CDATA #IMPLIED
+	maxwidth CDATA #IMPLIED
+	minheight CDATA #IMPLIED
+	maxheight CDATA #IMPLIED
+>
+<!ELEMENT area (area | cutout | state)*>
+<!ATTLIST area
+	name CDATA #IMPLIED
+	top CDATA #IMPLIED
+	left CDATA #IMPLIED
+	right CDATA #IMPLIED
+	width CDATA #IMPLIED
+	bottom CDATA #IMPLIED
+	height CDATA #IMPLIED
+	type (border | client | close | corner | drag | min | pane) #IMPLIED
+	subtype (top | bottom | left | right | topleft | topright | bottomleft | bottomright | drag | parent) #IMPLIED
+	color CDATA #IMPLIED
+	image CDATA #IMPLIED
+	hoverimage CDATA #IMPLIED
+	downimage CDATA #IMPLIED
+	focusimage CDATA #IMPLIED
+	target CDATA #IMPLIED
+	transparent (true | false) "false"
+	texthalign (left | right | center) "center"
+	textvalign (top | bottom | middle) "middle"
+	textfont CDATA #IMPLIED
+	textsize CDATA #IMPLIED
+	textcolor CDATA #IMPLIED
+	text CDATA #IMPLIED
+	leftmenu CDATA #IMPLIED
+	rightmenu CDATA #IMPLIED
+	onleftclick CDATA #IMPLIED
+	onrightclick CDATA #IMPLIED
+	hint CDATA ""
+>
+<!ELEMENT state EMPTY>
+<!ATTLIST state
+	name CDATA #IMPLIED
+	image CDATA #IMPLIED
+	hoverimage CDATA #IMPLIED
+	downimage CDATA #IMPLIED
+	focusimage CDATA #IMPLIED
+	transparent (true | false) "false"
+>
+<!ELEMENT cutout (#PCDATA)>
+<!ATTLIST cutout
+	type (polygon | elliptic) #REQUIRED
+>
+<!ELEMENT resource (resource*)>
+<!ATTLIST resource
+	name CDATA #REQUIRED
+	image CDATA #IMPLIED
+>
+<!ELEMENT menu (menuitem+)>
+<!ATTLIST menu
+	name CDATA #REQUIRED
+>
+<!ELEMENT menuitem (menuitem*)>
+<!ATTLIST menuitem
+	name CDATA #IMPLIED
+	caption CDATA #REQUIRED
+	onselect CDATA #IMPLIED
+>

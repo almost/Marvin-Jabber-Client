@@ -1,0 +1,62 @@
+-- ctlToggle control definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--BEGIN INSTANCE UNIQUE VARS---------------
+
+sequence WinID
+WinID = {}
+sequence Area
+Area = {}
+sequence CurState --Starting at 0
+CurState = {}
+sequence States --Starting at 0
+States = {}
+
+--END INSTANCE UNIQUE VARS---------------
+
+global procedure ctltoggle_SetState(integer index,integer state)
+    CurState[index] = state
+    skinx_SetState(WinID[index],Area[index],States[index][CurState[index]+1])
+end procedure
+
+global function ctltoggle_GetState(integer index)
+    return CurState[index]
+end function
+
+global procedure ctltoggle_ToggleState(integer index)
+    ctltoggle_SetState(index,not CurState[index])
+end procedure
+
+global function ctltoggle_Create(integer winid, sequence area, sequence states)    
+    WinID        = append( WinID        , winid        )
+    Area         = append( Area         , area         )
+    CurState     = append( CurState     , 0            )
+    States       = append( States       , states       )
+    
+    ctltoggle_SetState(length(WinID),CurState[length(CurState)])
+    
+    return length(WinID)
+end function

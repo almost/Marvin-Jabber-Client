@@ -1,0 +1,25 @@
+--example1.exw
+--Basic example for dragwin.ew: Just demonstrates moving the window
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+--23/March/2001
+--http://www.rat-software.com/projects.html
+
+without warning
+include win32lib.ew
+include dragwin.ew
+
+constant Win =  
+    create( Window, "Drag me from anywhere!", 0, 0, 0, 500, 300, 0 )
+    
+
+procedure Win_onMouse(atom event,atom x, atom y, atom shift)
+	if event = LeftDown then
+		dragwin_BeginMove(Win)
+	end if
+end procedure
+
+onMouse[Win] = routine_id("Win_onMouse")
+
+WinMain( Win, Normal )
+

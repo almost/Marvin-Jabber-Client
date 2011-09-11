@@ -1,0 +1,89 @@
+-- Formats date and time in datetime.e format to current users settings
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include datetime.e
+include dll.e
+include machine.e
+
+constant KERNEL32 = open_dll("kernel32")
+constant DATE_LONGDATE = 2
+constant dllGetTimeFormat = define_c_proc(KERNEL32,"GetTimeFormatA",{C_ULONG,C_ULONG,C_POINTER,C_POINTER,C_POINTER,C_ULONG})
+constant dllGetDateFormat = define_c_proc(KERNEL32,"GetDateFormatA",{C_ULONG,C_ULONG,C_POINTER,C_POINTER,C_POINTER,C_ULONG})
+
+function DateTimeToSYSTEMTIME(sequence d)
+    atom ret
+    ret = allocate(16)
+    poke4(ret,d[DT_DATE][YEAR])        --WORD wYear
+    poke4(ret+2,d[DT_DATE][MONTH])     --WORD wMonth;
+    poke4(ret+4,dayOfWeek(d[DT_DATE])) --WORD wDayOfWeek; 
+    poke4(ret+6,d[DT_DATE][DAY])       --WORD wDay; 
+    poke4(ret+8,d[DT_TIME][HOURS])     --WORD wHour;  
+    poke4(ret+10,d[DT_TIME][MINUTES])  --WORD wMinute; 
+    poke4(ret+12,d[DT_TIME][SECONDS])  --WORD wSecond;
+    poke(ret+14,{0,0})                    --WORD wMilliseconds
+    return ret
+end function
+
+global function formatdatetime_FormatTime(sequence t)
+    sequence ret
+    atom SYSTEMTIME
+    atom buffer
+    SYSTEMTIME = DateTimeToSYSTEMTIME({Date_0,t})
+    buffer = allocate(100)
+    c_proc(dllGetTimeFormat,{0,0,SYSTEMTIME,0,buffer,100})
+    ret = ""
+    for i = 1 to 100 do
+        if peek(buffer+i-1) = 0 then
+            exit
+        end if
+        ret &= peek(buffer+i-1)
+    end for
+    free(buffer)
+    free(SYSTEMTIME)
+    return ret
+end function
+
+global function formatdatetime_FormatDate(sequence d,integer longdateformat)
+    sequence ret
+    atom SYSTEMTIME
+    atom buffer
+    SYSTEMTIME = DateTimeToSYSTEMTIME({d,Time_0})
+    buffer = allocate(100)
+    c_proc(dllGetDateFormat,{0,DATE_LONGDATE*longdateformat,SYSTEMTIME,0,buffer,100})
+    ret = ""
+    for i = 1 to 100 do
+        if peek(buffer+i-1) = 0 then
+            exit
+        end if
+        ret &= peek(buffer+i-1)
+    end for
+    free(buffer)
+    free(SYSTEMTIME)
+    return ret
+end function
+
+global function formatdatetime_FormatDateTime(sequence d)
+    return formatdatetime_FormatDate(d[DT_DATE],0) & " " & formatdatetime_FormatTime(d[DT_TIME])
+end function

@@ -1,0 +1,89 @@
+-- wndroster window declarations
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include ctlRoster\ctlRoster_decs.ew
+include ctlRoster\ctlRoster_defs.ew
+--Declare controls
+global constant wndRoster                    = skinx_CreateWindow("roster",CLIENT_NAME_SHOW,Default,Default,230,600),
+                wndroster_ctlRoster          = ctlroster_Create(wndRoster,"roster","rosterscroll"),
+                wndroster_mnuContact         = create(Popup,"",wndRoster,0,0,0,0,0),
+                wndroster_mnuSendMessage     = create(MenuItem,"Send Message",wndroster_mnuContact,0,0,0,0,0),
+                wndroster_mnuRemove          = create(MenuItem,"Remove",wndroster_mnuContact,0,0,0,0,0),
+                wndroster_mnuCopyJID         = create(MenuItem,"Copy JID",wndroster_mnuContact,0,0,0,0,0),
+                wndroster_mnuCopyJIDWithNick = create(MenuItem,"Copy JID with Nick",wndroster_mnuContact,0,0,0,0,0),
+                wndroster_mnuRename          = create(MenuItem,"Rename/Move",wndroster_mnuContact,0,0,0,0,0),
+                wndroster_mnuRerequestAuth   = create(MenuItem,"Re-Request Authorization",wndroster_mnuContact,0,0,0,0,0),
+                wndroster_TopmostToggle      = ctltoggle_Create(wndRoster,"topmost",{"off","on"})
+                
+                
+global constant wndroster_mnuMenu         = create(Menu,"Menu",wndRoster,0,0,0,0,0),
+                wndroster_mnuStatus       = create(Menu,"&Status"                   ,wndroster_mnuMenu,0,0,0,0,0),
+                   wndroster_mnuAvailable  = create(MenuItem,"&Available"        ,wndroster_mnuStatus,0,0,0,0,0),
+                   wndroster_mnuChat       = create(MenuItem,"&Free for Chat"    ,wndroster_mnuStatus,0,0,0,0,0),
+                   wndroster_mnuAway       = create(MenuItem,"A&way"             ,wndroster_mnuStatus,0,0,0,0,0),
+                   wndroster_mnuXA         = create(MenuItem,"&Extended Away"    ,wndroster_mnuStatus,0,0,0,0,0),
+                   wndroster_mnuDND        = create(MenuItem,"&Do Not Disturb"   ,wndroster_mnuStatus,0,0,0,0,0),
+                   wndroster_mnuCustom     = create(MenuItem,"&Custom"           ,wndroster_mnuStatus,0,0,0,0,0)
+constant        mnuSeperator2             = create(MenuItem,"-"                     ,wndroster_mnuMenu,0,0,0,0,0)
+global constant wndroster_mnuAddContact   = create(MenuItem,"&Add Contact"          ,wndroster_mnuMenu,0,0,0,0,0),
+                wndroster_mnuChangeSkin   = create(MenuItem,"Change S&kin"          ,wndroster_mnuMenu,0,0,0,0,0),
+                wndroster_mnuGateways     = create(MenuItem,"&Gateway Setup"        ,wndroster_mnuMenu,0,0,0,0,0),
+                wndroster_mnuSettings     = create(MenuItem,"S&ettings"             ,wndroster_mnuMenu,0,0,0,0,0),
+                wndroster_mnuSounds       = create(MenuItem,"Enable S&ounds"         ,wndroster_mnuMenu,0,0,0,0,0),
+                wndroster_mnuChangePassword=create(MenuItem,"Change &Password"      ,wndroster_mnuMenu,0,0,0,0,0)
+constant        mnuSeperator3             = create(MenuItem,"-"                     ,wndroster_mnuMenu,0,0,0,0,0)
+global constant wndroster_mnuAlwaysOnTop  = create(MenuItem,"Always on &top"              ,wndroster_mnuMenu,0,0,0,0,0),
+                wndroster_mnuLogOff       = create(MenuItem,"&Log Off"              ,wndroster_mnuMenu,0,0,0,0,0),
+                wndroster_mnuExit         = create(MenuItem,"E&xit"                 ,wndroster_mnuMenu,0,0,0,0,0)
+
+
+skinx_ChangeEventHandler(wndRoster,routine_id("events_SkinxEventHandler"))
+
+-- Will be set to the routine ID of wndroster_ShowStateChanged
+global atom wndroster_ShowStateChanged_RID
+
+--Placed in declarations file so it works with systraymanage.ew which must be included before this file
+global procedure wndroster_Open()
+    if not StartInTray then
+        call_proc(wndroster_ShowStateChanged_RID,{})
+        openWindow(wndRoster,Normal)
+    else
+        StartInTray = 0 --only as it starts
+    end if
+end procedure      
+
+global atom wndroster_private_noshutdown
+wndroster_private_noshutdown = 0
+
+global procedure wndroster_Close()
+    wndroster_private_noshutdown = 1
+    closeWindow(wndRoster)
+end procedure
+
+-- Will get set to the routine IF of wndroster_UpdateItem in wndroster_defs.ew
+global atom wndroster_UpdateItem_RID
+global procedure wndroster_UpdateItem(sequence JID)
+    call_proc(wndroster_UpdateItem_RID,{JID})
+end procedure

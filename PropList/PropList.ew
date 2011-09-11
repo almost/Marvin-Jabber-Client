@@ -1,0 +1,1143 @@
+-- emulation of property list control
+-- (c) 2000 David Cuny
+--  modifications by Judith Evans
+-- From Judith's Enhanced Win32Lib IDE
+
+-- Modifications by Thomas Parslow (PatRat) to make control more generic and independent from IDE
+-- Removed property name specific code
+-- Changed propList to PropExtra
+-- Added PropType to indicate property type (with various bits of code to handle each type)
+-- Can now have more than one prop list 
+
+include get.e
+include VK.ew --REQUIRED for propTypeHotKey
+
+without warning
+
+constant GDI32 = open_dll("gdi32")
+constant EnumFontFamilies = define_c_proc(GDI32,"EnumFontFamiliesA",{C_ULONG,C_ULONG,C_ULONG,C_ULONG})
+constant USER32 = open_dll("user32.dll")
+constant dllGetForegroundWindow = define_c_func(USER32,"GetForegroundWindow",{},C_ULONG)
+
+sequence
+    propCX,     
+    propCY
+    
+propCX = {}
+propCY = {}
+
+sequence  
+    PropWin,        -- parent window of property list
+    dropActive,     -- if true, dropdown list is being displayed
+    PropScroll,     -- scrollbar
+    PropSle,        -- text edit
+    DropList,       -- drop down list
+    PropPix,        -- pixmap for drawing property list
+    CoveredPix,     -- pixmap for restoring area under dropdown list
+    propX,          -- property list position and size
+    propY,      
+    scrollX,        -- property list scroll bar position and size
+    scrollY,
+    scrollCX,
+    scrollCY,
+    cellNameCX,     -- width of the attribute cells
+    cellpropCX,     -- width of the property cells
+    propTop,        -- top item displayed in property list
+    propFocus,      -- item in property list with focus
+    dropX,          -- position of the dropdown list
+    dropY
+
+PropWin     = {}
+dropActive  = {}
+PropScroll  = {}
+PropSle     = {}
+DropList    = {}
+PropPix     = {}
+CoveredPix  = {}
+propX       = {}
+propY       = {}
+scrollX     = {}
+scrollY     = {}
+scrollCX    = {}
+scrollCY    = {}
+cellNameCX  = {}
+cellpropCX  = {}
+propTop     = {}
+propFocus   = {}
+dropX       = {}
+dropY       = {}
+    
+    
+global sequence
+    onPropChange    -- callback for onChange event
+    
+onPropChange = {}
+
+atom gettingHotKey
+gettingHotKey = 0
+     
+sequence 
+    propList
+    
+propList = {}
+
+
+-- attributes of the property list
+constant
+    PropName    = 1,    -- name displayed on the list
+    PropValue   = 2,    -- editable property value
+    PropCanEdit = 3,    -- if true, editable property
+    PropExtra   = 4,    -- extra data needed for data propType (list of items, bounds for numeric items, file propType for file selection)
+    PropType    = 5    -- the propType of value to obtain from the user
+    
+global constant     
+    propTypeText    = 1,    -- Any textual value
+    --BUG: doesn't work with fractions, should really wait till user has finished typing before validating
+    propTypeNumeric  = 2,    -- A Numeric value, bounds can be supplied in PropExtra: {min,max}. NOTE: will still be returned as string 
+    propTypeList     = 3,    -- A list of items selectable from the drop down box (available items supplied in PropExtra)
+    propTypeFile     = 4,    -- A file, file propType mask data supplied in PropExtra
+    propTypeYesNo    = 5,    -- A boolean value, similar to TypeList but PropExtra does not need to be supplied
+    propTypeColor    = 6,    -- A color, PropExtra does not need to be supplied. value is a numeric color code
+    propTypeFont     = 7,    -- A list of fonts, similar to TypeList but PropExtra does not need to be supplied (is created from system font list)
+    propTypePercentage = 8,  -- A percentage, presented as number between 0 and 100. PropExtra has {lower,upper} values (0 = lower, 100 = upper)
+    propTypePassword = 9,    -- Shows typed value as *'s.
+    propTypeHotKey   = 10    -- Allows the user to pick a hotkey and returns it in the form "KEY1+KEY2". PropExtra is a sequence of valid keys, at least one must be part of the hot key combination
+    
+constant
+    DropListMax = 6,    -- maximum number of elements in dropdown
+    CellCY      = 20,   -- height of property list cell
+    TextIndentX = 4,    -- offset to adjust text into cell
+    TextIndentY = 4
+
+constant MAX_cellNameCX = 300,
+         MIN_cellNameCX = 80
+         
+
+sequence FontList
+
+atom OldonEventScreenEvent
+OldonEventScreenEvent = -1
+
+
+function GetPercentageDisplay(atom index, atom item)
+    object val
+    val = value(propList[index][item][PropValue])
+    if propList[index][item][PropExtra][2]-propList[index][item][PropExtra][1] < 0 then --lower is higher than upper
+       val[2] = val[2] - propList[index][item][PropExtra][2]
+       val =  100-(100*(val[2]/abs(propList[index][item][PropExtra][2]-propList[index][item][PropExtra][1])))
+    else
+       val[2] = val[2] - propList[index][item][PropExtra][1]
+       val =  100*(val[2]/abs(propList[index][item][PropExtra][2]-propList[index][item][PropExtra][1]))
+    end if
+    return sprintf("%.0f",{val})&"%"
+end function
+
+-------------------------------------------------------------------------------
+global function propGetCursorPos(integer index)
+
+    -- get the cursor position in the SLE
+    return lo_word( sendMessage( PropSle[index], EM_GETSEL, NULL, NULL ) )
+
+end function
+
+-------------------------------------------------------------------------------
+procedure drawButton( integer control, integer x1, integer y1,
+                        integer cx, integer cy )
+
+    integer x2, y2
+
+    -- calculate absolute position
+    x2 = x1 + cx - 1
+    y2 = y1 + cy - 1
+
+    -- the button
+    setPenColor( control, getSysColor( COLOR_BTNFACE ) )
+    drawRectangle( control, 1, x1, y1, x2, y2 )
+
+    -- highlight    
+    setPenColor( control, getSysColor( COLOR_3DHILIGHT ) )
+    drawLine( control, x1+1, y1+1, x2-1, y1+1 )
+    drawLine( control, x1+1, y1+1, x1+1, y2-1 )
+
+    -- inner shadow
+    setPenColor( control, getSysColor( COLOR_BTNSHADOW ) )
+    drawLine( control, x2-1, y1+1, x2-1, y2 )
+    drawLine( control, x1+1, y2-1, x2, y2-1 )
+
+    -- outer shadow
+    setPenColor( control, getSysColor( COLOR_3DDKSHADOW ) )
+    drawLine( control, x2, y1, x2, y2+1 )
+    drawLine( control, x1, y2, x2+1, y2 )
+
+
+    -- calculate center
+    x1 += floor(((x2-3) - x1)/2)
+    y1 += floor(((y2-3) - y1)/2)
+
+    -- the down arrow
+    drawLine( control, x1, y1, x1+5, y1 )
+    drawLine( control, x1+1, y1+1, x1+4, y1+1 )
+    drawLine( control, x1+2, y1+2, x1+3, y1+2 )
+        
+end procedure
+  
+-------------------------------------------------------------------------------
+function hasDropdown(integer index, integer i )
+    if i <= length( propList[index] )
+    and i > 0 then
+        return find(propList[index][i][PropType],{propTypeList,propTypeYesNo,propTypeFont})
+    else
+        return 0
+    end if
+end function
+
+
+-------------------------------------------------------------------------------
+function cellPosition( integer i )
+    return (i-1) * CellCY
+end function
+  
+
+-------------------------------------------------------------------------------
+procedure drawCell( integer index,integer cell )          
+    sequence colortemp
+
+    -- update only the current cell in the list
+
+    integer x1, y1, x2, y2, i
+    
+    -- relative position
+    i = cell - propTop[index] + 1
+    
+    -- visible?
+    if i < 1 then
+        return
+    end if
+
+    -- calculate dimensions of the name cell
+    x1 = 1
+    y1 = cellPosition(i)
+    x2 = x1 + cellNameCX[index]
+    y2 = cellPosition(i+1)
+
+    -- draw the name
+    if cell = propFocus[index] then
+        -- fill color
+        setPenColor( PropPix[index], getSysColor( COLOR_HIGHLIGHT ) )
+        drawRectangle( PropPix[index], 1, x1, y1, x2, y2 )
+
+        -- highlight text        
+        setTextColor( PropPix[index], getSysColor( COLOR_HIGHLIGHTTEXT ) )
+
+    elsif propList[index][cell][PropCanEdit] then
+        -- normal text color
+        setTextColor( PropPix[index], getSysColor( COLOR_BTNTEXT ) )
+        
+    else
+        -- inactive text color
+        setTextColor( PropPix[index], getSysColor( COLOR_GRAYTEXT ) )
+    
+    end if          
+    
+    setPenPos( PropPix[index], x1+TextIndentX, y1+TextIndentY )
+    wPuts( PropPix[index], propList[index][cell][PropName] )
+    
+    -- draw the border
+    setPenColor( PropPix[index], getSysColor( COLOR_BTNSHADOW ) )
+    drawRectangle( PropPix[index], 0, x1, y1, x2+1, y2+1 )
+
+    -- calculate dimensions of the property cell
+    x1 = cellNameCX[index]
+    x2 = x1+cellpropCX[index]
+    
+    -- erase the text in the cell property
+    if propList[index][cell][PropType] = propTypeColor then
+        colortemp = value(propList[index][cell][PropValue]) 
+        setPenColor( PropPix[index], colortemp[2])
+    else
+        setPenColor( PropPix[index], getSysColor( COLOR_WINDOW ) )
+    end if
+    drawRectangle( PropPix[index], 1, x1, y1, x2, y2 )
+
+    -- draw the property
+    if propList[index][cell][PropType] != propTypeColor then
+        setTextColor( PropPix[index], getSysColor( COLOR_BTNTEXT ) )
+        setPenPos( PropPix[index], x1+TextIndentX, y1+TextIndentY )
+        if propList[index][cell][PropType] = propTypePercentage then
+            wPuts( PropPix[index], GetPercentageDisplay(index,cell) )
+        elsif propList[index][cell][PropType] = propTypePassword then
+            wPuts( PropPix[index], repeat('*',length(propList[index][cell][PropValue])))
+        elsif propList[index][cell][PropType] = propTypeHotKey and propFocus[index] = cell and gettingHotKey then
+            wPuts( PropPix[index], "(press keys now or escape to clear)")
+        else
+            wPuts( PropPix[index], propList[index][cell][PropValue] )
+        end if
+    end if
+    
+    -- draw the border
+    setPenColor( PropPix[index], getSysColor( COLOR_BTNSHADOW ) )
+    drawRectangle( PropPix[index], 0, x1, y1, x2+1, y2+1 )
+    
+    -- dropdown button?
+    if cell = propFocus[index]
+    and (propList[index][cell][PropType] = propTypeFile or propList[index][cell][PropType] = propTypeColor or hasDropdown(index,cell)) then
+        drawButton( PropPix[index], x2-CellCY, y1+1, CellCY-1, CellCY-1 )
+    end if
+
+    
+end procedure
+
+-------------------------------------------------------------------------------
+procedure drawpropList(integer index)
+    -- draw the property list
+    integer i
+    sequence size
+
+    -- calculate size of pixmap
+    size = getCtlSize( PropPix[index] )
+
+    -- erase the pixmap
+    setPenColor( PropPix[index], getSysColor( COLOR_WINDOW ) )
+    drawRectangle( PropPix[index], 1, 1, 1, size[1], size[2] )
+
+    -- draw the cells
+    i = 0
+    for cell = 1 to length( propList[index] ) do
+             
+        -- set relative position
+        i += 1
+        
+        -- draw the cell
+        drawCell(index, i )
+        
+    end for
+  
+end procedure
+
+-------------------------------------------------------------------------------
+global procedure propPaint(integer index, integer x1, integer y1, integer x2, integer y2 )
+    -- draw the properties list               
+
+    drawpropList(index)  
+    bitBlt( PropWin[index], propX[index], propY[index], PropPix[index], 1, 1, propCX[index], propCY[index], SRCCOPY )
+
+    x1 = propX[index]-2
+    y1 = propY[index]-2
+    x2 = x1 + propCX[index] + scrollCX[index] + 3
+    y2 = y1 + propCY[index] + 3
+    
+    -- outer shadow
+    setPenColor( PropWin[index], getSysColor( COLOR_BTNSHADOW ) )
+    drawLine( PropWin[index], x1, y1, x1, y2 )
+    drawLine( PropWin[index], x1, y1, x2, y1 )
+    
+    -- inner shadow
+    setPenColor( PropWin[index], getSysColor( COLOR_3DDKSHADOW ) )
+    drawLine( PropWin[index], x1+1, y1+1, x1+1, y2-1 )
+    drawLine( PropWin[index], x1+1, y1+1, x2-1, y1+1 )
+    
+    -- highlight    
+    setPenColor( PropWin[index], getSysColor( COLOR_3DHILIGHT ) )
+    drawLine( PropWin[index], x2, y1, x2, y2+1 )
+    drawLine( PropWin[index], x1+1, y2, x2+1, y2 )
+
+end procedure
+
+procedure onpaint(integer x1, integer y1, integer x2, integer y2 )
+    propPaint(find(getSelf(),PropWin),x1,y1,x2,y2)
+end procedure
+
+function EnumFontsCallback(atom lpelf, atom lpntm, atom FontType, atom lParam)
+    FontList = append(FontList,peek_string(lpelf+28))
+    return 1
+end function
+
+function split(sequence s,atom delimiter)
+    atom loc
+    sequence ret
+    ret = {}
+    loc = find(delimiter,s)
+    while loc != 0 do
+        ret = append(ret,s[1..loc-1])
+        s = s[loc+1..length(s)]
+        loc = find(delimiter,s)
+    end while
+    if length(s) != 0 then
+        ret = append(ret,s)
+    end if
+    return ret
+end function
+
+--procedure onevent(integer KeyCode, integer Shift)
+procedure onevent( integer event, atom wParam, atom lParam)
+    integer KeyCode,Shift
+    atom index,RequiredKey,NonRequiredKey
+    sequence KeysDown,SplitKeysDown
+    sequence Hwnds
+    
+    if event = WM_SYSKEYDOWN or event = WM_KEYDOWN or event = WM_KEYUP or event = WM_SYSKEYUP then
+        KeyCode = wParam
+        
+        Shift = and_bits(#80, w32Func( xGetKeyState, {VK_SHIFT} )) * ShiftMask +
+                and_bits(#80, w32Func( xGetKeyState, {VK_CONTROL} )) * ControlMask +
+                and_bits(#80, w32Func( xGetKeyState, {VK_MENU} )) * AltMask
+    
+        Hwnds = {}
+        for i = 1 to length(PropWin) do
+            Hwnds &= getHandle(PropWin[i])
+        end for
+
+        index = find(c_func(dllGetForegroundWindow,{}),Hwnds) 
+
+        if index = 0 then
+            if OldonEventScreenEvent != -1 then
+                onEvent[Screen] = OldonEventScreenEvent
+                call_proc(OldonEventScreenEvent,{event,wParam,lParam})
+            end if
+            return
+        end if
+
+        --Check that a valid item is selected
+        if propFocus[index] > length(propList[index]) then return end if
+        --Check that the selected item is a hot key
+        if propList[index][propFocus[index]][PropType] != propTypeHotKey or not gettingHotKey then return end if
+
+        KeysDown = vk_GetDownKeys()
+
+        SplitKeysDown = split(KeysDown,'+')
+        if event = WM_SYSKEYDOWN or event = WM_KEYDOWN then
+            if find("ESCAPE",SplitKeysDown) then
+                propList[index][propFocus[index]][PropValue] = ""
+            elsif length(SplitKeysDown) < 2 then
+                return
+            else
+                --Check that at least one of the required keys is depresed
+                RequiredKey = 0
+                NonRequiredKey = 0
+                for i = 1 to length(SplitKeysDown) do
+                    if find(SplitKeysDown[i],propList[index][propFocus[index]][PropExtra]) then
+                        RequiredKey = 1
+                    else
+                        NonRequiredKey = 1
+                    end if
+                end for
+                if (RequiredKey = 0 and length(propList[index][propFocus[index]][PropExtra])>0) or NonRequiredKey = 0 then return end if
+
+                propList[index][propFocus[index]][PropValue] = KeysDown
+            end if
+
+            setText( PropSle[index], propList[index][propFocus[index]][PropValue] )
+        else
+            if length(SplitKeysDown) = 0 then
+                gettingHotKey = 0
+                -- update the cell
+                drawCell( index,propFocus[index] )
+
+                -- blit the update
+                bitBlt( PropWin[index], propX[index], propY[index], PropPix[index], 1, 1, propCX[index], propCY[index], SRCCOPY )     
+            end if
+        end if
+    end if
+end procedure
+
+-------------------------------------------------------------------------------
+procedure propActivateFocus( integer index,integer focus, integer cursorPos )
+
+    -- focus on the requested control
+    integer x, y, routine, result
+
+    -- Reset gettingHotKey flag
+    gettingHotKey = 0
+
+    -- set the focus
+    propFocus[index] = focus
+
+    -- repaint control
+    propPaint(index,0,0,0,0)
+
+    -- kill default behavior, or gets stuck in loop...
+    routine = onChange[PropSle[index]]
+    onChange[PropSle[index]] = -1
+
+    -- set value
+    if propList[index][propFocus[index]][PropType] = propTypePercentage then
+        setText( PropSle[index], GetPercentageDisplay(index,propFocus[index]) )
+    else
+        setText( PropSle[index], propList[index][propFocus[index]][PropValue] )
+    end if
+
+    -- restore behavior
+    onChange[PropSle[index]] = routine
+
+    if propList[index][propFocus[index]][PropType] = propTypeHotKey then
+        if onEvent[Screen] != routine_id("onevent") then
+           OldonEventScreenEvent = onEvent[Screen]
+           onEvent[Screen] = routine_id("onevent")
+        end if
+    else
+        if onEvent[Screen] = routine_id("onevent") then
+           onEvent[Screen] = OldonEventScreenEvent
+        end if
+    end if
+
+    -- has dropdown?
+    if propList[index][propFocus[index]][PropType] = propTypeFile or
+       propList[index][propFocus[index]][PropType] = propTypeColor or
+       hasDropdown(index,propFocus[index]) or
+       propList[index][propFocus[index]][PropType] = propTypeHotKey then
+        -- hide sle
+        setVisible( PropSle[index], 0 )
+        setEnable( PropSle[index], 0 )
+    else
+        x = propX[index] + cellNameCX[index]
+        y = propY[index] + cellPosition( propFocus[index] - propTop[index] + 1 )
+        setRect( PropSle[index], x, y, cellpropCX[index]-1, CellCY, 1 )
+        setVisible( PropSle[index], 1 )
+        setEnable( PropSle[index], 1 )
+        
+        -- set cursor position?
+        if cursorPos then
+            result = sendMessage( PropSle[index], EM_SETSEL, cursorPos, cursorPos )
+        end if
+        
+        if propList[index][propFocus[index]][PropType] = propTypePassword then
+            result = sendMessage( PropSle[index], EM_SETPASSWORDCHAR, '*', 0 )
+        else
+            result = sendMessage( PropSle[index], EM_SETPASSWORDCHAR, 0, 0 )
+        end if
+        
+    end if
+
+    -- set focus to real control
+    setFocus( PropSle[index] )
+       
+end procedure
+
+-------------------------------------------------------------------------------
+global procedure addProperty( integer index, sequence name, object attrib, integer active,
+                        sequence extra, integer pType )            
+   
+    object namewidth
+    atom hDC 
+         
+    -- need to convert property to a number?
+    if integer( attrib ) then
+        attrib = sprintf( "%d", {attrib} )
+    elsif atom( attrib ) then
+        attrib = sprintf( "%f", {attrib} )
+    end if
+    
+    
+    -- If this is a yes/no type then convert the value to yes or no
+    if pType = propTypeYesNo then
+        extra = {"Yes","No"}
+        if not find(attrib,extra) then
+            attrib = value(attrib)
+            if attrib[2] then
+                attrib = "Yes"
+            else
+                attrib = "No"
+            end if
+        end if
+    --If this is a font type then populate with fonts
+    elsif pType = propTypeFont then
+        --Enumerate all system fonts
+        FontList = {}
+        hDC = getDC(Screen)
+        c_proc(EnumFontFamilies,{hDC,0,call_back(routine_id("EnumFontsCallback")),0})
+        releaseDC(Screen)
+        extra = sort(FontList)
+    elsif pType = propTypePercentage then
+        if atom(extra) or length(extra) = 0 then
+            extra = {0,100}
+        end if
+    end if
+                        
+    -- add to list
+    propList[index] &= {{ name, attrib, active, extra , pType }}
+
+    -- adjust scroll range    
+    setScrollRange( PropScroll[index], 1, length( propList[index] ) )
+    
+    -- If necisery adjust the width of the name column to acomodate this properties name
+    namewidth = getTextExtent(PropWin[index], name)
+    namewidth = namewidth[1] + (TextIndentX * 2) --Times 2 to have at least the indent width on the other side as well
+    if namewidth > cellNameCX[index] then
+        if namewidth > MAX_cellNameCX then
+            namewidth = MAX_cellNameCX
+        end if
+        -- size the property list cells
+        cellNameCX[index]  = namewidth
+        cellpropCX[index]  = propCX[index] - cellNameCX[index]
+    end if
+    
+    --If this is the first/only item in the list then set focus to it
+    if length(propList[index]) = 1 then
+        propActivateFocus(index,1,0)
+    end if
+    
+    --Repaint
+    propPaint(index,0,0,0,0)
+end procedure
+
+-------------------------------------------------------------------------------
+global function getPropValue( integer index, object idx )
+    -- return value of current property
+    
+    --If a name has been supplied instead of an index then find an index now
+    if sequence(idx) then
+        for i = 1 to length(propList[index]) do
+            if equal(idx,propList[index][i][PropName]) then
+                idx = i
+                exit
+            end if
+        end for
+        if sequence(idx) then
+            --Didn't manage to find index
+            return 0
+        end if
+    end if
+    
+    if propFocus[index] > length( propList[index] )
+    or idx < 0 then
+        return ""
+    else    
+        if propList[index][idx][PropType] = propTypeYesNo then
+            return sprint(equal(propList[index][idx][PropValue],"Yes"))
+        else
+            return propList[index][idx][PropValue]
+        end if
+    end if
+end function
+
+-------------------------------------------------------------------------------
+procedure propChange()
+
+    integer index
+
+    sequence name, property
+    
+    atom routine
+    
+    object val
+    
+    index = find(getSelf(),PropSle)
+    
+    routine = onChange[PropSle[index]]
+    onChange[PropSle[index]] = -1
+
+    -- get name and value
+    property = getText( PropSle[index] )   
+    
+    -- if it's a numeric value check bounds
+    if propList[index][propFocus[index]][PropType] = propTypeNumeric then
+        val = value(property)
+        val = val[2]
+        if sequence(propList[index][propFocus[index]][PropExtra]) and length(propList[index][propFocus[index]][PropExtra])=2 then
+            if val < propList[index][propFocus[index]][PropExtra][1] then
+                val = propList[index][propFocus[index]][PropExtra][1]
+                property = sprint(val)
+            elsif val > propList[index][propFocus[index]][PropExtra][2] then
+                val = propList[index][propFocus[index]][PropExtra][2]
+                property = sprint(val)
+            end if
+        end if
+    elsif propList[index][propFocus[index]][PropType] = propTypePercentage then
+        val = value(property)
+        if val[2] > 100 then
+            val[2] = 100
+        elsif val[2] < 0 then
+            val[2] = 0
+        end if
+        val =  floor(abs(propList[index][propFocus[index]][PropExtra][2]-propList[index][propFocus[index]][PropExtra][1])*(val[2]/100))
+        if propList[index][propFocus[index]][PropExtra][2]-propList[index][propFocus[index]][PropExtra][1] < 0 then --lower is higher than upper
+            val = abs(propList[index][propFocus[index]][PropExtra][2]-propList[index][propFocus[index]][PropExtra][1])+propList[index][propFocus[index]][PropExtra][2]-val
+        else
+            val = val+propList[index][propFocus[index]][PropExtra][1]
+        end if
+        property = sprint(val)
+    end if
+    
+    --if not equal(getText( PropSle[index] ), property) then
+    --    setText( PropSle[index], property )
+    --end if
+
+    name = propList[index][propFocus[index]][PropName]
+
+    -- update                  
+    propList[index][propFocus[index]][PropValue] = property
+    
+    -- callback?
+    if onPropChange[index] != -1 then
+        call_proc( onPropChange[index], { name, getPropValue(index,propFocus[index]) } )
+    end if
+    
+    onChange[PropSle[index]] = routine
+end procedure
+
+-------------------------------------------------------------------------------
+procedure propScroll( integer pos )
+    integer index
+    
+    index = find(getSelf(),PropScroll)
+    
+    -- hide the sle
+    setVisible( PropSle[index], 0 )
+    setEnable( PropSle[index], 0 )
+    
+    -- get the top item
+    propTop[index] = pos
+    propPaint(index,0,0,0,0)
+end procedure
+
+-------------------------------------------------------------------------------
+procedure chooseFile(integer index)
+    sequence filename
+    
+    --Show the Open File dialog to the user
+    filename = getOpenFileName( PropWin[index], "" , propList[index][propFocus[index]][PropExtra] )
+    
+    --If the user choose a file then update the values
+    if length(filename) then
+        setText( PropSle[index], filename )
+        -- update the cell
+        drawCell( index,propFocus[index] )
+            
+        -- blit the update
+        bitBlt( PropWin[index], propX[index], propY[index], PropPix[index], 1, 1, propCX[index], propCY[index], SRCCOPY )
+    end if
+end procedure
+
+-------------------------------------------------------------------------------
+procedure chooseColor(integer index)
+    object color
+    
+    color = value(propList[index][propFocus[index]][PropValue])
+    --Show the Get Color dialog to the user
+    propList[index][propFocus[index]][PropValue] = sprint(getColorDialog( PropWin[index], color[2] ))
+    setText( PropSle[index], propList[index][propFocus[index]][PropValue] )
+    
+    -- update the cell
+    drawCell( index,propFocus[index] )
+            
+    -- blit the update
+    bitBlt( PropWin[index], propX[index], propY[index], PropPix[index], 1, 1, propCX[index], propCY[index], SRCCOPY )
+end procedure
+
+-------------------------------------------------------------------------------
+procedure activateDropList(integer index)
+
+    integer at, cx, cy
+    sequence items
+    
+    -- enable the list
+    setEnable( DropList[index], 1 ) 
+    
+    -- disable the sle
+    setEnable( PropSle[index], 1 )
+    
+    items = propList[index][propFocus[index]][PropExtra]
+    eraseItems( DropList[index] )
+    for i = 1 to length( items ) do
+        addItem( DropList[index], items[i] )
+    end for
+
+    -- set the selected item
+    at = find( propList[index][propFocus[index]][PropExtra], items )
+    setIndex( DropList[index], at )
+
+    -- size of list        
+    cx = cellpropCX[index]
+    if length( items ) > DropListMax then
+        cy = DropListMax * CellCY
+    else
+        cy = length( items ) * CellCY
+    end if
+    
+    -- postion of list
+    dropX[index] = propX[index] + cellNameCX[index]
+    dropY[index] = propY[index] + cellPosition( propFocus[index] - propTop[index] + 2 )
+
+    -- copy covered area
+    if cx > 0 and cy > 0 then
+        setCtlSize( CoveredPix[index], cx, cy )
+    end if
+    bitBlt( CoveredPix[index], 0, 0, PropWin[index], dropX[index], dropY[index], cx, cy, SRCCOPY )
+
+    -- move list under window
+    setRect( DropList[index], dropX[index], dropY[index], cx, cy, 1 )
+    
+    -- focus on list
+    setFocus( DropList[index] )
+    
+    dropActive[index] = 1    
+    
+end procedure
+
+-------------------------------------------------------------------------------
+procedure deactivateDropList()
+
+    integer idx,index
+    sequence property
+    
+    index = find(getSelf(),DropList)
+    
+    if not dropActive[index] then
+        return
+    end if
+    
+    idx = getIndex( DropList[index] )
+
+    if idx > 0 then
+        -- set value                     
+        property = getItem( DropList[index], idx )  
+        propList[index][propFocus[index]][PropValue] = property
+        setText( PropSle[index], property )
+    end if
+
+    -- set focus to hidden sle
+    setFocus( PropSle[index] )
+
+    -- hide list
+    setEnable( DropList[index], 0 )
+    setRect( DropList[index], -100, -100, 0, 0, 0 )
+
+    -- restore covered area
+    copyBlt( PropWin[index], dropX[index], dropY[index], CoveredPix[index] )
+    
+    -- destroy the pixmap
+    -- setCtlSize( CoveredPix[index], 0, 0 )
+    
+    dropActive[index] = 0
+    
+    -- update the cell
+    drawCell( index,propFocus[index] )
+    
+    -- blit the update
+    bitBlt( PropWin[index], propX[index], propY[index], PropPix[index], 1, 1, propCX[index], propCY[index], SRCCOPY )
+
+end procedure
+
+
+-------------------------------------------------------------------------------
+function hitIndex( integer mouseY, integer listTop )
+    -- return index of hit item
+    -- assume height = CellCY
+    
+    -- subtract from top, and use modulus
+    return floor( (mouseY-listTop)/CellCY ) + 1
+    
+end function
+
+-------------------------------------------------------------------------------
+global function inpropList(integer index, integer x, integer y )
+
+    -- return true if hit property list
+    if x < propX[index]
+    or y < propY[index]
+    or x > propX[index] + propCX[index] - 1
+    or y > propY[index] + propCY[index] - 1 then
+        return 0
+    else
+        return 1
+    end if  
+    
+end function
+
+-------------------------------------------------------------------------------
+--10.3
+sequence whoIs
+    whoIs={}
+-------------------------------------------------------------------------------
+global procedure propMouse( integer event, integer x, integer y, integer shift )
+
+    integer index
+
+    -- handle mouse events in the property control's window
+    integer hit
+
+    index = find(getSelf(),PropWin)
+    if index = 0 then
+        index = find(getSelf(),PropSle)
+    end if
+
+    -- only interested in clicks
+    if event = LeftDown
+    or event = RightDown then
+
+        --continue
+    else
+        return
+    end if
+
+    -- if mouse missed, exit    
+    if not inpropList( index, x, y ) then
+        return
+    end if
+
+    -- find index
+    hit = hitIndex( y, propY[index] )
+    
+    -- past end of list?
+    if hit > length( propList[index] ) - propTop[index] + 1 then
+
+        return
+    else
+        hit += propTop[index] - 1
+    end if
+
+    -- inactive?
+    if not propList[index][hit][PropCanEdit] then
+        return
+    end if
+
+    -- hit box with existing focus?
+    if propFocus[index] = hit then
+
+        -- hit button?
+        if x > propX[index] + propCX[index] - CellCY then        
+            if hasDropdown(index,hit) then
+                -- activate the drop down list
+                activateDropList(index)
+            elsif propList[index][hit][PropType] = propTypeFile then
+                -- show the open file dialog
+                chooseFile(index)
+            elsif propList[index][hit][PropType] = propTypeColor then
+                chooseColor(index)
+            else
+                -- activate the cell
+                propActivateFocus( index, hit, 0 )
+            end if
+        end if
+    else
+        -- activate the cell
+        propActivateFocus( index, hit, 0 )
+    end if
+    
+    if propList[index][propFocus[index]][PropType] = propTypeHotKey then
+        if x > cellNameCX[index] + propX[index] then
+            gettingHotKey = 1
+        else
+            gettingHotKey = 0
+        end if
+        drawCell( index,propFocus[index] )
+
+        -- blit the update
+        bitBlt( PropWin[index], propX[index], propY[index], PropPix[index], 1, 1, propCX[index], propCY[index], SRCCOPY )
+    end if
+end procedure
+
+-----------------------------------------------------------------------------
+global procedure eraseProperties(integer index)
+    -- size the property list cells
+    cellNameCX[index]  = MIN_cellNameCX
+    cellpropCX[index]  = propCX[index] - cellNameCX[index]
+    
+    propList[index] = {} 
+    propFocus[index] = 1
+    propTop[index] = 1
+    setVisible( PropSle[index], 0 )
+    setEnable( PropSle[index], 0 )
+    setScrollRange( PropScroll[index], 0, 0 )
+    
+    --Repaint
+    propPaint(index,0,0,0,0)
+end procedure
+
+-------------------------------------------------------------------------------
+global function getPropIndex(integer index)
+    -- return index of current property
+    return propFocus[index]
+end function
+
+
+-------------------------------------------------------------------------------
+global function getPropName( integer index,integer idx )
+    -- return name of current property
+    if propFocus[index] > length( propList[index] )
+    or idx < 0 then
+        return ""
+    else    
+        return propList[index][idx][PropName]
+    end if
+end function
+
+
+-------------------------------------------------------------------------------
+global procedure setPropValue( integer index, integer idx, sequence val )
+    propList[index][idx][PropValue] = val
+end procedure
+
+-------------------------------------------------------------------------------
+global procedure setPropEnable( integer index, integer idx, sequence flag )
+    propList[index][idx][PropCanEdit] = flag
+end procedure
+
+-------------------------------------------------------------------------------
+global procedure setPropExtra( integer index, integer idx, sequence list )
+    propList[index][idx][PropExtra] = list
+end procedure
+
+-------------------------------------------------------------------------------
+global procedure setPropFocus( integer index, sequence name, integer cursorPos )
+
+    -- set focus to requested property
+    integer routine, y, visible
+  
+    -- nothing to focus on?
+    if length( propList[index] ) = 0 then
+        return
+    end if
+  
+    -- look though list
+    for i = 1 to length( propList[index] ) do
+    
+        -- matches name?
+        if equal( propList[index][i][PropName], name ) then
+            
+            -- can't edit?
+            if not propList[index][i][PropCanEdit] then
+                return
+            end if
+            
+            -- not already on property?
+            if propFocus[index] != i then
+
+                -- test visibility
+                visible = 1
+                if i < propTop[index] then
+                    -- not visible
+                    visible = 0
+                else
+                    y = (i - propTop[index]) * CellCY
+                    if y >= propCY[index] then
+                        visible = 0
+                    end if
+                end if
+
+                if not visible then
+
+                    -- move scrollbar        
+                    routine = onScroll[PropScroll[index]]
+                    onScroll[PropScroll[index]] = -1
+                    setScrollPos( PropScroll[index], i )
+                    onScroll[PropScroll[index]] = routine
+    
+                    -- move to top cell
+                    propTop[index] = i
+                    
+                end if
+                    
+            end if
+    
+            -- activate the cell
+            propActivateFocus( index, i, cursorPos )
+            return
+            
+        end if
+    end for
+
+end procedure
+
+--+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+--added by Judith Evans
+global procedure reSizeProperties( integer index, integer cx, integer cy )
+--v9M.3
+    --Adjust size for border and scrollbar
+    cx = cx - scrollCX[index]-4
+    cy = cy - 4 --2 being the width of the border
+    
+    
+    propCX[index]  = cx
+    propCY[index]  = cy
+    scrollCY[index] = propCY[index]
+    scrollX[index] = propX[index] + propCX[index]
+    cellpropCX[index]  = propCX[index] - cellNameCX[index]
+
+    setRect( PropScroll[index], scrollX[index], scrollY[index], scrollCX[index], scrollCY[index], True )
+    setCtlSize( PropSle[index], cellpropCX[index], CellCY )
+    if cellpropCX[index] > 0 and cy > 0 then
+        setCtlSize( PropPix[index], cx, cy )
+        setCtlSize( CoveredPix[index], cellpropCX[index], DropListMax + CellCY )
+    end if
+
+    propPaint(index,0, 0, 0, 0)
+end procedure
+
+-------------------------------------------------------------------------------
+global function createPropList( integer parent, integer x, integer y,
+                            integer cx, integer cy )
+    integer index
+
+    --Adjust position for sizes of borders
+    x = x + 2
+    y = y + 2
+
+    index = length(PropWin) + 1
+    
+    -- clear property list
+    propList = append(propList,{})
+                            
+    -- size and position of the property list
+    propX   &= x
+    propY   &= y
+    propCX  &= cx
+    propCY  &= cy
+
+    
+    dropX &= 0
+    dropY &= 0
+    
+    -- size and position of the property list scrollbar
+    scrollCX &= 14
+    scrollCY &= propCY[index]
+    scrollX &= propX[index] + propCX[index]
+    scrollY &= propY[index]
+
+    -- size the property list cells
+    cellNameCX  &= MIN_cellNameCX
+    cellpropCX  &= propCX[index] - cellNameCX[index]
+
+    -- set to defaults
+    propTop &= 1     -- list is scrolled to top
+    propFocus &= 1   -- focus is on first item
+    dropActive &= 0  -- dropdown list is not displayed
+
+    -- clear callback
+    onPropChange &= -1
+
+    -- create the controls
+    PropWin &= parent
+    PropScroll &= create( VScroll, "", PropWin[index], scrollX[index], scrollY[index], scrollCX[index], scrollCY[index], 0 )
+
+    --10.4 remove WS_EX_CLIENTEDGE 3-D look
+    PropSle &= createEx( EditText, "", PropWin[index], -100, -100, cellpropCX[index], CellCY, 0, {WS_EX_ACCEPTFILES} )
+    DropList &= createEx( List, "", PropWin[index], -100, -100, 0, 0, 0, {WS_EX_ACCEPTFILES} )
+
+    PropPix &= create( Pixmap, "", 0, 0, 0, 1    , 1, 0 )
+    CoveredPix &= create( Pixmap, "", 0, 0, 0, 1, 1, 0 )
+
+    -- set callbacks
+    onPaint[PropWin[index]] = routine_id("onpaint")  
+    onMouse[PropWin[index]] = routine_id("propMouse")
+    onChange[PropSle[index]] = routine_id("propChange")
+    --10.3
+    onMouse[PropSle[index]]=routine_id("propMouse")
+
+    onScroll[PropScroll[index]] = routine_id("propScroll")
+    onChange[DropList[index]] = routine_id("deactivateDropList")
+    onClick[DropList[index]] = routine_id("deactivateDropList")
+    onLostFocus[DropList[index]] = routine_id("deactivateDropList")
+    -- disable DropList[index]
+
+    setEnable( DropList[index], 0 )
+
+    -- size Pixmaps and draw it
+    reSizeProperties(index ,cx,cy)
+    
+    return index
+end function
+
+
+
+

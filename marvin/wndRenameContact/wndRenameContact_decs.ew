@@ -1,0 +1,35 @@
+-- wndRenameContact window declarations
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--Declare controls.
+--Generated in part with Judith's Enhanced Win32lib IDE, thanks :)
+global constant wndRenameContact = create( Window, "Rename/Move Contact", 0, Default, Default, 305, 159, {WS_DLGFRAME, WS_SYSMENU} )
+global constant wndrenamecontact_Instruct1 = create( LText, "Nickname:", wndRenameContact, 4, 4, 150, 20, 0 )
+global constant wndrenamecontact_Nickname = create( EditText, "", wndRenameContact, 4, 24, 288, 20, 0 )
+global constant wndrenamecontact_Instruct2 = create( LText, "Groups:", wndRenameContact, 4, 48, 150, 20, 0 )
+global constant wndrenamecontact_Group = create( Combo, "Contacts", wndRenameContact, 4, 68, 292, 20*6, 0 )
+global constant wndrenamecontact_Ok = create( PushButton, "Ok", wndRenameContact, 128, 100, 75, 25, 0 )
+global constant wndrenamecontact_Cancel = create( PushButton, "Cancel", wndRenameContact, 216, 100, 75, 25, 0 )

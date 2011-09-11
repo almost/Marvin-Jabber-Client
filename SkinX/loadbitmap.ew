@@ -1,0 +1,60 @@
+include win32lib.ew
+
+global function loadbitmap_LoadFromSeq( sequence bytes )
+
+    -- Based on loadBitmapFromFile2 in win32lib
+
+    atom        bmFile, bmInfoHeader, bmBits, bmColors, hdc, hDib
+    integer     hFile, fSize, byte
+    sequence    info
+
+    fSize = length(bytes)
+
+    -- read the whole file
+    bmFile = acquire_mem(0, fSize )
+    poke(bmFile,bytes)
+
+    
+    -- check header
+    if compare( fetch( bmFile, bfType ), "BM" ) != 0 then
+    release_mem( bmFile )
+    -- warning
+    return 0
+    end if
+    
+    -- check header size against file size
+    if fetch( bmFile, bfSize ) != fSize then
+    -- correct header in memory
+    store( bmFile, bfSize, fSize )
+    end if
+
+    -- address of BitmapInfoHeader
+    bmInfoHeader = bmFile + SIZEOF_BITMAPFILEHEADER
+    
+    -- offset to bitmap data
+    bmBits = bmFile + fetch( bmFile, bfOffBits ) 
+    
+    -- address of color information
+    bmColors = bmInfoHeader + SIZEOF_BITMAPINFOHEADER
+    
+    -- Get the screen's device context.
+    hdc = getDC( Screen )
+
+    -- Create the DIB.
+    hDib = w32Func( xCreateDIBitmap, {
+            hdc,                -- handle to device context
+            address( bmInfoHeader, bmiHeader ), -- pointer to BITMAPINFOHEADER
+            CBM_INIT,           -- initialization flag
+            bmBits,             -- address of initialization data
+            bmInfoHeader,       -- pointer to color data
+            DIB_RGB_COLORS} )   -- colors are RGB tuples
+
+    -- release the screen dc        
+    releaseDC( Screen )
+    
+    -- Free memory
+    release_mem( bmFile )
+    
+    return hDib
+
+end function

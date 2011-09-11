@@ -1,0 +1,527 @@
+-- wndroster window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+include win32lib.ew
+include alphablend.ew
+
+-- Fixed version of the function of the same name in win32lib
+-- peek4u changed to peek4s to work with negative mouse coords in multimonitor systems
+object VOID
+function getPointerPos()
+    atom tmpMem
+    sequence xy
+
+    tmpMem = acquire_mem(0, 8)
+
+    VOID = w32Func(xGetCursorPos,{tmpMem})
+
+    xy = peek4s({tmpMem, 2})
+
+    release_mem( tmpMem)
+
+    return xy
+end function
+
+--------------------------
+
+global procedure wndroster_EraseItems()
+    ctlroster_EraseItems(wndroster_ctlRoster)
+end procedure
+
+--Global version of this is linked in wndroster_decs.ew
+procedure wndroster_UpdateItem(sequence JID)
+    sequence state,group,nick,hint
+    sequence cat
+    sequence image
+    if length(JID) = 0 then return end if
+    if not atom(JID[1]) then --it's a list of items 
+        ctlroster_LockUpdate(wndroster_ctlRoster)
+        for i = 1 to length(JID) do
+            wndroster_UpdateItem(JID[i])
+        end for
+        ctlroster_UnlockUpdate(wndroster_ctlRoster)
+        return
+    end if
+    JID = jabber_RemoveJIDResource(lower(JID))
+    if not jabber_rosterExists(JID) then return end if
+    if not jabber_rosterIsGateway(JID) then
+        state = jabber_rosterGetStatus(JID)
+        group = jabber_rosterGetGroups(JID)
+        nick = jabber_rosterGetNick(JID)
+        
+        if not jabber_rosterGetSubscriptionTo(JID) and jabber_rosterGetAsk(JID) != JABBER_ROSTER_ASK_SUBSCRIBE then
+            --To stop showing people we're not subscribed to in the roster...
+            return
+        end if
+        
+        if state[1] = JABBER_SHOWSTATE_OFFLINE then
+            cat = "Offline"
+            image = "Roster/item/offline"
+        else
+            cat = "Online"
+            if state[1] = JABBER_SHOWSTATE_AVAILABLE then
+                image = "Roster/item/available"
+            elsif state[1] = JABBER_SHOWSTATE_CHAT then
+                image = {"Roster/item/chat","Roster/item/available"}
+            elsif state[1] = JABBER_SHOWSTATE_AWAY then
+                image = {"Roster/item/away","Roster/item/available"}
+            elsif state[1] = JABBER_SHOWSTATE_XA then
+                image = {"Roster/item/xa","Roster/item/away","Roster/item/available"}
+            elsif state[1] = JABBER_SHOWSTATE_DND then
+                image = {"Roster/item/dnd","Roster/item/away","Roster/item/available"}
+            end if
+        end if
+        
+        if find(JID,message_EnumJIDHiddenMessageWins()) then
+            if settings_Get("Roster","FlashNewMessageIcon") then
+                if floor(time())/2 = floor(floor(time())/2) then
+                    image = {"Roster/item/message"}
+                end if
+            else
+                image = {"Roster/item/message"} & image
+            end if
+        end if
+        
+        if length(group) = 0 then
+            group = ""--Contacts" --jabberim puts ppl with no group into "friends", but i find this a bit anoying ;)
+        else
+            group = group[1]
+        end if
+        
+        if jabber_rosterGetAsk(JID) = JABBER_ROSTER_ASK_SUBSCRIBE then
+            if settings_Get("Roster","PendingCat") then
+                cat = "Pending"
+            else
+                nick &= " (pending)"
+            end if
+        end if
+        
+        hint = jabber_rosterGetStatus(JID)
+        hint = JID & " - " & JABBER_SHOW_STATES_FRIENDLY[hint[1]] & " (" & hint[2] & ")"
+    else
+        --state = jabber_rosterGetStatus(JID)
+        JID = jabber_serviceGetJID(JID)
+        state = jabber_serviceGetStatus(JID)
+        group ="" --CHANGE THIS
+        cat = "Gateways"
+        nick = jabber_serviceGetName(JID)
+        if state[1] = JABBER_SHOWSTATE_OFFLINE then
+            image = "Roster/item/offline"
+        else
+            if state[1] = JABBER_SHOWSTATE_AVAILABLE then
+                image = "Roster/item/available"
+            elsif state[1] = JABBER_SHOWSTATE_CHAT then
+                image = {"Roster/item/chat","Roster/item/available"}
+            elsif state[1] = JABBER_SHOWSTATE_AWAY then
+                image = {"Roster/item/away","Roster/item/available"}
+            elsif state[1] = JABBER_SHOWSTATE_XA then
+                image = {"Roster/item/xa","Roster/item/away","Roster/item/available"}
+            elsif state[1] = JABBER_SHOWSTATE_DND then
+                image = {"Roster/item/dnd","Roster/item/away","Roster/item/available"}
+            end if
+        end if
+        
+        hint = JID
+    end if
+
+    ctlroster_UpdateItem(wndroster_ctlRoster,JID,nick,hint,cat,group,image)
+end procedure
+wndroster_UpdateItem_RID = routine_id("wndroster_UpdateItem")
+
+procedure FlashTimer()
+    sequence HiddenWinJIDs
+    if settings_Get("Roster","FlashNewMessageIcon") then
+        HiddenWinJIDs = message_EnumJIDHiddenMessageWins()
+        for i = 1 to length(HiddenWinJIDs) do
+            wndroster_UpdateItem(HiddenWinJIDs[i])
+        end for
+    end if
+end procedure
+GetTimerEvent(routine_id("FlashTimer"),1000)
+
+procedure RosterSettingChanged()
+    wndroster_UpdateItem(jabber_EnumRosterItems())
+end procedure
+settings_NotifyOnChange("Roster","PendingCat",routine_id("RosterSettingChanged"))
+
+global procedure wndroster_DeleteItem(sequence JID)
+    JID = lower(JID)
+    ctlroster_DeleteItem(wndroster_ctlRoster,JID)
+end procedure
+
+global procedure wndroster_SetSelected(sequence JIDs)
+    JIDs = lower(JIDs)
+    ctlroster_SetSelected(wndroster_ctlRoster,JIDs)
+end procedure
+
+global procedure wndroster_ShowStateChanged()
+    sequence status
+    status = jabber_GetShowState()
+    skinx_SetTextVar(wndRoster,"$status$",status[2])
+    skinx_SetTextVar(wndRoster,"$showstate$",JABBER_SHOW_STATES_FRIENDLY[status[1]])
+    skinx_SetState(wndRoster,"showstate",JABBER_SHOW_STATES[status[1]])
+end procedure
+wndroster_ShowStateChanged_RID = routine_id("wndroster_ShowStateChanged")
+
+--GENERAL PURPOSE
+--Send a message to selected user(s)
+procedure SendMessageToContacts() --also used as the event handler for itemdoubleclick
+    sequence selected
+    selected = ctlroster_GetSelected(wndroster_ctlRoster)
+    for i = length(selected) to 1 by -1 do
+        if jabber_rosterIsGateway(selected[i]) then
+            selected = selected[1..i-1]&selected[i+1..length(selected)]
+        end if
+    end for
+    messages_ComposeMessage(selected)
+end procedure
+
+procedure DeleteContacts()
+    sequence selected
+    selected = ctlroster_GetSelected(wndroster_ctlRoster)
+    if length(selected) > 0 and message_box("Delete selected contact(s)?",CLIENT_NAME_SHOW,{MB_YESNO}) = IDYES then
+        for i = length(selected) to 1 by -1 do
+            if not jabber_rosterIsGateway(selected[i]) then
+                jabber_rosterRemove(selected[i])
+            end if
+        end for
+    end if
+end procedure
+
+procedure CopyJID(atom WithNick)
+    sequence selected,clip
+    atom mem,tmpmem
+    clip = ""
+    selected = ctlroster_GetSelected(wndroster_ctlRoster)
+    for i = length(selected) to 1 by -1 do
+        if not jabber_rosterIsGateway(selected[i]) then
+            if WithNick then
+                clip &= jabber_rosterGetNick(selected[i]) & " <" & selected[i] & ">,"
+            else
+                clip &= selected[i] & ","
+            end if
+        end if
+    end for 
+    clip = clip[1..length(clip)-1]
+    --Place clip into the clipboard as text
+    if not w32Func(xOpenClipboard,{getHandle(wndRoster)}) then return end if
+    if w32Func(xEmptyClipboard,{}) then end if
+    mem = w32Func(xGlobalAlloc,{GMEM_CLIPBOARD ,length(clip)+2})
+    poke(w32Func(xGlobalLock,{mem}),clip&0)
+    if w32Func(xGlobalUnlock,{mem}) then end if
+    if w32Func(xSetClipboardData,{CF_TEXT,mem}) then end if
+    w32Proc(xCloseClipboard,{})
+end procedure
+
+procedure CopyJIDWithoutNick()
+    CopyJID(0)
+end procedure
+
+procedure CopyJIDWithNick()
+    CopyJID(1)
+end procedure
+
+procedure Rename()
+    sequence selected
+    selected = ctlroster_GetSelected(wndroster_ctlRoster)
+    for i = length(selected) to 1 by -1 do
+        if not jabber_rosterIsGateway(selected[i]) then
+            wndrenamecontact_Open(selected[i])
+            exit
+        end if
+    end for 
+end procedure
+
+procedure RerequestAuth()
+    sequence selected
+    selected = ctlroster_GetSelected(wndroster_ctlRoster)
+    for i = 1 to length(selected) do
+        if not jabber_rosterIsGateway(selected[i]) and not jabber_rosterGetSubscriptionTo(selected[i])  then
+            jabber_rosterAdd(selected[i],jabber_rosterGetNick(selected[i]),jabber_rosterGetGroups(selected[i]),0)
+        end if
+    end for 
+end procedure
+
+procedure ChangePassword()
+    object Fields
+    Fields = {{"Current password","",propTypePassword,{}},
+              {"New password"    ,"",propTypePassword,{}},
+              {"Confirm password","",propTypePassword,{}}}
+    Fields = wndgenericfields_Show("Change password","The server may take a few minutes to update.",Fields)
+    if atom(Fields) then
+        return
+    end if
+    if not equal(Fields[1][2],jabber_Password()) then
+        ShowError("Password invalid")
+        return
+    end if
+    if not equal(Fields[2][2],Fields[3][2]) then
+        ShowError("Passwords don't match")
+        return
+    end if
+    jabber_RegisterWithService(jabber_CurrentServer(),{{"password",Fields[2][2]}})
+    
+end procedure
+
+--EVENTS
+
+--skinx
+procedure wndRosterEvent(atom id, sequence event)
+    sequence mousepos
+    if    equal(event,"sendmessage") then
+        SendMessageToContacts()
+    elsif equal(event,"removecontact") then
+        DeleteContacts()
+    elsif equal(event,"topmost") then
+        settings_Save("Roster","Topmost",not settings_Get("Roster","Topmost"))
+    elsif equal(event,"menu") then
+        setCheck(wndroster_mnuAlwaysOnTop,settings_Get("Roster","Topmost"))
+        setCheck(wndroster_mnuSounds,settings_Get("Sounds","Enable"))
+        mousepos = getPointerPos()-4
+        mousepos = ScreenToClient(wndRoster,mousepos[1],mousepos[2])
+        popup(wndroster_mnuMenu,mousepos[1],mousepos[2])
+    elsif equal(event,"changepassword") then
+        ChangePassword()
+    end if
+end procedure
+events_SetHandler(wndRoster,routine_id("wndRosterEvent"))
+
+procedure mnuAvailable_onclick()
+    events_SendEvent(wndRoster,"setavailable")
+end procedure
+onClick[wndroster_mnuAvailable] = routine_id("mnuAvailable_onclick")
+
+procedure mnuChat_onclick()
+    events_SendEvent(wndRoster,"setchat")
+end procedure
+onClick[wndroster_mnuChat] = routine_id("mnuChat_onclick")
+
+procedure mnuAway_onclick()
+    events_SendEvent(wndRoster,"setaway")
+end procedure
+onClick[wndroster_mnuAway] = routine_id("mnuAway_onclick")
+
+procedure mnuXA_onclick()
+    events_SendEvent(wndRoster,"setxa")
+end procedure
+onClick[wndroster_mnuXA] = routine_id("mnuXA_onclick")
+
+procedure mnuDND_onclick()
+    events_SendEvent(wndRoster,"setdnd")
+end procedure
+onClick[wndroster_mnuDND] = routine_id("mnuDND_onclick")
+
+procedure mnuCustom_onclick()
+    events_SendEvent(wndRoster,"setcustom")
+end procedure
+onClick[wndroster_mnuCustom] = routine_id("mnuCustom_onclick")
+
+procedure mnuAddContact_onclick()
+    events_SendEvent(wndRoster,"addcontact")
+end procedure
+onClick[wndroster_mnuAddContact] = routine_id("mnuAddContact_onclick")
+
+procedure mnuChangeSkin_onclick()
+    events_SendEvent(wndRoster,"changeskin")
+end procedure
+onClick[wndroster_mnuChangeSkin] = routine_id("mnuChangeSkin_onclick")
+
+procedure mnuGateways_onclick()
+    events_SendEvent(wndRoster,"gateways")
+end procedure
+onClick[wndroster_mnuGateways] = routine_id("mnuGateways_onclick")
+
+procedure mnuSettings_onclick()
+    events_SendEvent(wndRoster,"settings")
+end procedure
+onClick[wndroster_mnuSettings] = routine_id("mnuSettings_onclick")
+
+procedure mnuSounds_onclick()
+    events_SendEvent(wndRoster,"ToggleSounds")
+end procedure
+onClick[wndroster_mnuSounds] = routine_id("mnuSounds_onclick")
+
+procedure mnuChangePassword_onclick()
+    events_SendEvent(wndRoster,"changepassword")
+end procedure
+onClick[wndroster_mnuChangePassword] = routine_id("mnuChangePassword_onclick")
+
+procedure mnuAlwaysOnTop_onclick()
+    events_SendEvent(wndRoster,"topmost")
+end procedure
+onClick[wndroster_mnuAlwaysOnTop] = routine_id("mnuAlwaysOnTop_onclick")
+
+procedure mnuLogOff_onclick()
+    events_SendEvent(wndRoster,"logoff")
+end procedure
+onClick[wndroster_mnuLogOff] = routine_id("mnuLogOff_onclick")
+
+procedure mnuExit_onclick()
+    shutdown_Ask()
+end procedure
+onClick[wndroster_mnuExit] = routine_id("mnuExit_onclick")
+
+--win32lib
+procedure onClose_wndRoster()
+    if wndroster_private_noshutdown then
+        wndroster_private_noshutdown = 0
+    else
+        shutdown_Ask()
+    end if
+end procedure
+
+
+--ctlRoster
+procedure ItemRightClick_ctlRoster()
+    atom GatewaysSelected,ItemsSelected,PendingItemsSelected
+    sequence selected,mousepos
+    selected = ctlroster_GetSelected(wndroster_ctlRoster)
+    GatewaysSelected = 0 ItemsSelected = 0 PendingItemsSelected = 0
+    for i = 1 to length(selected) do
+        if jabber_rosterIsGateway(selected[i]) then
+            GatewaysSelected += 1
+        else
+            ItemsSelected += 1
+            if not jabber_rosterGetSubscriptionTo(selected[i]) then
+                PendingItemsSelected += 1
+            end if
+        end if
+    end for
+    if ItemsSelected and not GatewaysSelected then
+        if PendingItemsSelected then
+            setEnable(wndroster_mnuRerequestAuth,1)
+        else
+            setEnable(wndroster_mnuRerequestAuth,0)
+        end if
+        if ItemsSelected > 1 then
+            setEnable(wndroster_mnuRename,0)
+        else
+            setEnable(wndroster_mnuRename,1)
+        end if
+        --Show just above the mouse pointer
+        mousepos = getPointerPos()-4
+        mousepos = ScreenToClient(wndRoster,mousepos[1],mousepos[2])
+        popup(wndroster_mnuContact,mousepos[1],mousepos[2])
+    end if
+end procedure
+
+procedure Move_ctlRoster(sequence To)
+    sequence selected
+    selected = ctlroster_GetSelected(wndroster_ctlRoster)
+    for i = 1 to length(selected) do
+        if not jabber_rosterIsGateway(selected[i]) then
+            if length(To) > 0 then
+                jabber_rosterSetGroups(selected[i],{To})
+            else
+                jabber_rosterSetGroups(selected[i],{})
+            end if
+        end if
+    end for    
+end procedure
+
+--------------------------------------------------
+--Placed in declarations file so it works with systraymanage.ew which must be included before this file
+--global procedure wndroster_Open()
+--  openWindow(wndRoster,Normal)
+--end procedure
+--
+--global procedure wndroster_Close()
+--    wndroster_private_noshutdown = 1
+--    closeWindow(wndRoster)
+--end procedure
+
+procedure onResize_wndRoster(atom style, atom x, atom y)    
+    if style = SIZE_MINIMIZED then 
+        wndroster_Close()
+    end if
+end procedure
+
+constant WHEEL_DELTA = 120
+procedure onEvent_wndRoster( integer event, atom wParam, atom lParam)
+    atom Scroll
+    if event = WM_MOUSEWHEEL then
+        Scroll = hi_word(wParam)
+        -- Do 2's compliment on the value to make it a signed number
+        if and_bits(#8000,Scroll) then
+            Scroll = Scroll-#FFFF-1
+        end if
+        ctlroster_Scroll(wndroster_ctlRoster,-Scroll/WHEEL_DELTA)
+    end if
+    skinx_HandleEvent(getSelf(),event,wParam,lParam)
+end procedure
+
+procedure onAlphaBlendChange()
+    alphablend_SetWinAlpha(getHandle(wndRoster),settings_Get("Roster","TransAlpha"))    
+end procedure
+
+procedure onTopmostChange()
+    ctltoggle_SetState(wndroster_TopmostToggle,settings_Get("Roster","Topmost"))
+    if settings_Get("Roster","Topmost") then
+        moveZOrder(wndRoster,HWND_TOPMOST)
+    else
+        moveZOrder(wndRoster,HWND_NOTOPMOST)
+    end if
+end procedure
+
+procedure onShowInTaskbarChange()
+    if isVisible(wndRoster) then
+        wndroster_Close()
+        onShowInTaskbarChange()
+        wndroster_Open()
+        return
+    end if
+    if settings_Get("Roster","ShowInTaskbar") then
+        removeStyle(wndRoster,{0,WS_EX_TOOLWINDOW})
+    else
+        addStyle(wndRoster,{0,WS_EX_TOOLWINDOW})
+    end if
+end procedure
+
+procedure onRecievedSettings()
+    onAlphaBlendChange()
+    onTopmostChange()
+    onShowInTaskbarChange()
+end procedure
+
+--Event hooks
+ctlroster_SetEventHandler(wndroster_ctlRoster,CTLROSTER_EVENT_ITEMDOUBLECLICK,routine_id("SendMessageToContacts"))
+ctlroster_SetEventHandler(wndroster_ctlRoster,CTLROSTER_EVENT_ITEMRIGHTCLICK, routine_id("ItemRightClick_ctlRoster"))
+ctlroster_SetEventHandler(wndroster_ctlRoster,CTLROSTER_EVENT_MOVE, routine_id("Move_ctlRoster"))
+onClose[wndRoster] = routine_id("onClose_wndRoster")
+onResize[wndRoster] = routine_id("onResize_wndRoster")
+onEvent[wndRoster] = routine_id("onEvent_wndRoster")
+
+settings_NotifyOnChange("Roster","TransAlpha",routine_id("onAlphaBlendChange"))
+settings_NotifyOnChange("Roster","Topmost",routine_id("onTopmostChange"))
+settings_NotifyOnChange("Roster","ShowInTaskbar",routine_id("onShowInTaskbarChange"))
+settings_onRecieved(routine_id("onRecievedSettings"))
+--Menus
+onClick[wndroster_mnuSendMessage]         = routine_id("SendMessageToContacts")
+onClick[wndroster_mnuRemove]              = routine_id("DeleteContacts")
+onClick[wndroster_mnuCopyJID]             = routine_id("CopyJIDWithoutNick")
+onClick[wndroster_mnuCopyJIDWithNick]     = routine_id("CopyJIDWithNick")
+onClick[wndroster_mnuRename]              = routine_id("Rename")
+onClick[wndroster_mnuRerequestAuth]       = routine_id("RerequestAuth")

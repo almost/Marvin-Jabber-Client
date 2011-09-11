@@ -1,0 +1,93 @@
+-- wndGenericFields window definitions
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+--This window is not skinable
+
+constant F_NAME = 1,
+         F_VALUE = 2,
+         F_TYPE = 3,
+         F_EXTRA = 4
+
+atom OkClicked
+
+-- Fields is: {{name,value,type,extra},..}
+-- Return value is Fields with it's value element set apropriatly (or 0 if cancel was clicked)
+global function wndgenericfields_Show(sequence Caption, sequence Label, sequence Fields)    
+    atom propheight
+    sequence rect,wndrect
+    
+    setText(wndGenericFields,Caption)
+    setText(wndgenericfields_Label,Label)
+    
+    eraseProperties(wndgenericfields_Fields)
+    for i = 1 to length(Fields) do
+        addProperty(wndgenericfields_Fields,Fields[i][F_NAME],Fields[i][F_VALUE],1,Fields[i][F_EXTRA],Fields[i][F_TYPE])
+    end for
+    
+    propheight = length(Fields)*20+4
+    reSizeProperties(wndgenericfields_Fields,255,propheight)
+    
+    -- Move the ok button
+    rect = getRect(wndgenericfields_cmdOK)
+    setRect(wndgenericfields_cmdOK,rect[1],propheight+24+4,rect[3]-rect[1],rect[4]-rect[2],0)
+    
+    rect = getRect(wndgenericfields_cmdCancel)
+    setRect(wndgenericfields_cmdCancel,rect[1],propheight+24+4,rect[3]-rect[1],rect[4]-rect[2],0)
+
+    rect = getRect(wndgenericfields_cmdCancel)
+    wndrect = getRect(wndGenericFields)    
+    setClientRect(wndGenericFields,wndrect[3]-wndrect[1],rect[4]+4)
+    
+    
+    
+    OkClicked = 0
+    openWindow(wndGenericFields,Normal)    
+    setFocus(wndgenericfields_cmdCancel) -- to stop the scrollbar in the proplist from flashing
+    -- Wait for the user to make a selection
+    while isVisible(wndGenericFields) do
+        doEvents(0)
+    end while
+    if OkClicked then
+        trace(1)
+        for i = 1 to length(Fields) do
+            Fields[i][F_VALUE] = getPropValue(wndgenericfields_Fields,Fields[i][F_NAME])
+        end for
+        return Fields
+    else
+        return 0
+    end if
+end function
+
+procedure onClick_Cancel()
+    closeWindow(wndGenericFields)
+end procedure
+
+procedure onClick_Ok()
+    OkClicked = 1
+    closeWindow(wndGenericFields)
+end procedure
+
+onClick[wndgenericfields_cmdOK] = routine_id("onClick_Ok")
+onClick[wndgenericfields_cmdCancel] = routine_id("onClick_Cancel")

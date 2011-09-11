@@ -1,0 +1,94 @@
+--Windows 2000 Alpha Blending Example
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+--2nd December 2001
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+include dll.e
+
+constant USER32 = open_dll("user32")
+constant dllSetLayeredWindowAttributes = define_c_proc(USER32,"SetLayeredWindowAttributes",{C_ULONG,C_ULONG,C_UCHAR,C_ULONG})
+constant dllSetWindowLong = define_c_func(USER32,"SetWindowLongA",{C_ULONG,C_ULONG,C_ULONG},C_ULONG)
+
+constant abGWL_EXSTYLE = (-20),
+         abWS_EX_LAYERED = #80000,
+         abLWA_ALPHA = 2,
+         abLWA_COLORKEY = 1
+
+--This sequence stores existing values, this stops alphablend_SetWinAlpha and alphablend_SetWinTransColor stepping on eachothers toes
+sequence Cache --sequence of {hwnd,color,alpha}
+Cache = {}
+
+--Set window back to opaque
+global function alphablend_Supported()
+    return dllSetLayeredWindowAttributes!=-1
+end function
+
+procedure SetLayeredWindowAttributes(atom hWnd,atom colorkey, integer alpha)
+    if not alphablend_Supported() then return end if
+    --Set the abWS_EX_LAYERED flag of the window
+    if colorkey = - 1 and alpha = -1 then
+        if c_func(dllSetWindowLong,{hWnd,abGWL_EXSTYLE,and_bits(c_func(dllSetWindowLong,{hWnd,abGWL_EXSTYLE,0}),not_bits(abWS_EX_LAYERED))}) then end if
+    else
+        if c_func(dllSetWindowLong,{hWnd,abGWL_EXSTYLE,or_bits(c_func(dllSetWindowLong,{hWnd,abGWL_EXSTYLE,0}),abWS_EX_LAYERED)}) then end if
+        c_proc(dllSetLayeredWindowAttributes,{hWnd,colorkey,alpha,((colorkey!=-1)*abLWA_COLORKEY)+((alpha!=-1)*abLWA_ALPHA)})
+    end if
+end procedure
+
+--Will set the transparency of a window in windows 2000
+--alpha should be between 0 (transparent) and 255 (opaque)
+global procedure alphablend_SetWinAlpha(atom hWnd, integer alpha)
+    atom loc
+    if alpha = 255 then alpha = -1 end if
+    loc = -1
+    for i = 1 to length(Cache) do
+        if Cache[i][1] = hWnd then
+            loc = i
+        end if
+    end for
+    if loc = -1 then
+        Cache = append(Cache,{hWnd,-1,-1})
+        loc = length(Cache)
+    end if
+    Cache[loc][3] = alpha
+    SetLayeredWindowAttributes(Cache[loc][1],Cache[loc][2],Cache[loc][3])
+end procedure
+
+--Will set the transparency of a window in windows 2000
+--You can get the color value using rgb(#,#,#)
+--Use -1 to to remove transparency
+global procedure alphablend_SetWinTransColor(atom hWnd, atom color)
+    atom loc
+    for i = 1 to length(Cache) do
+        if Cache[i][1] = hWnd then
+            loc = i
+        end if
+    end for
+    if loc = -1 then
+        Cache = append(Cache,{hWnd,-1,-1})
+        loc = length(Cache)
+    end if
+    Cache[loc][2] = color
+    SetLayeredWindowAttributes(Cache[loc][1],Cache[loc][2],Cache[loc][3])
+end procedure

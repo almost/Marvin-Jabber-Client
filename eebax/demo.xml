@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE skin [
+<!ENTITY test "&amp;">
+<!ENTITY test "&amp;">
+<!ENTITY test "&amp;">
+<!ENTITY test "&amp;">
+]>
+<skin name="metal">
+	<about>
+		<displayname>Metal</displayname>
+		<descr>Slightly more presentable than the old test skin I think :)</descr>
+		<author>Thomas Parslow (PatRat)</author>
+		<email>patrat@rat-software.com</email>
+		<web>http://www.rat-software.com/</web>
+	</about>
+	<resource name="roster">
+		<resource name="group">
+			<resource name="expanded" image="groupexpanded.gif"/>
+			<resource name="collapsed" image="groupcollapsed.gif"/>
+		</resource>
+		<resource name="item">
+			<resource name="available" image="available.gif"/>
+			<resource name="chat" image="chat.gif"/>
+			<resource name="away" image="away.gif"/>
+			<resource name="xa" image="xa.gif"/>
+			<resource name="dnd" image="dnd.gif"/>
+		</resource>
+	</resource>
+	<resource name="scrollbar">
+		<resource name="up" image="scrollup.gif"/>
+		<resource name="down" image="scrolldown.gif"/>
+		<resource name="background" image="scrollbg.gif"/>
+		<resource name="thumb" image="scrollthumb.gif"/>
+	</resource>
+	<resource name="systray">
+		<resource name="available" image="available16.gif"/>
+		<resource name="away" image="away16.gif"/>
+		<!--
+		<resource name="chat" image="chat.gif"/>
+		<resource name="xa" image="xa.gif"/>
+		<resource name="dnd" image="dnd.gif"/>
+		-->
+		<resource name="message" image="message16.gif"/>
+	</resource>
+	<menu name="status">
+		<menuitem name="available" onselect="SetAvailable" caption="Available"/>
+		<menuitem name="chat" onselect="SetChat" caption="Free for Chat"/>
+		<menuitem name="away" onselect="SetAway" caption="Away"/>
+		<menuitem name="xa" onselect="SetXA" caption="Extended Away"/>
+		<menuitem name="dnd" onselect="SetDND" caption="Do Not Disturb"/>
+		<menuitem name="Custom" onselect="SetCustom" caption="Custom"/>
+	</menu>
+	<window name="roster">
+		<title>Roster</title>
+		<icon>icon.ico</icon>
+		<bounds minwidth="270" maxwidth="0" minheight="150" maxheight="0"/>
+		<area name="toplevel" top="T0" left="L0" right="R0" bottom="B0" onrightclick="menu">
+			<area name="top" top="T0" left="L0" right="R0" height="64">
+				<area name="topleft" type="border" subtype="left" top="T0" left="L0" width="8" height="64" image="top-left.gif">
+					<area name="topleftcorner" type="corner" subtype="topleft" top="T0" left="L0" width="8" height="8"/>
+				</area>
+				<area name="topmiddle" top="T0" left="L8" right="R8" height="64" image="top-middle.gif">
+					<area name="dragbar" type="drag" top="T0" left="L0" right="R0" height="12" text="Marvin Jabber Client" textsize="8" textfont="Courier">
+						<area name="topmost" top="T4" left="R33" width="8" height="8" onleftclick="topmost" hint="Toggle whether Roster window should hover over other windows">
+							<state name="on" image="minmax.gif"/>
+							<state name="off" image="minmax-up.gif"/>
+						</area>
+						<area name="min" type="min" top="T4" left="R18" width="8" height="8" image="minmax.gif"/>
+						<area name="close" type="close" top="T4" left="R8" width="8" height="8" image="minmax.gif"/>
+					</area>
+					<area name="toolbar" top="T12" left="L0" right="R0" height="52">
+						<area name="sendbutton" hint="MSG: Send a message to selected contacts" top="T10" left="L4" height="32" width="24" image="send-normal.gif" downimage="send-down.gif" transparent="true" onleftclick="SendMessage"/>
+						<area name="statusbutton" hint="STS: Change your online status" top="T10" left="L34" height="32" width="24" image="status-normal.gif" downimage="status-down.gif" transparent="true" leftmenu="Status"/>
+						<area name="skinbutton" hint="SKN: Change the skin" top="T10" left="L63" height="32" width="24" image="skin-normal.gif" downimage="skin-down.gif" transparent="true" onleftclick="ChangeSkin"/>
+						<area name="addbutton" hint="ADD: Add a contact to your roster" top="T10" left="L93" height="32" width="24" image="add-normal.gif" downimage="add-down.gif" transparent="true" onleftclick="AddContact"/>
+						<area name="removebutton" hint="REM: Remove selected contacts from your roster" top="T10" left="L123" height="32" width="24" image="remove-normal.gif" downimage="remove-down.gif" transparent="true" onleftclick="RemoveContact"/>
+						<area name="gateways" hint="GTW: Setup gateways to other networks" top="T10" left="R88" height="32" width="24" image="gateways-normal.gif" downimage="gateways-down.gif" transparent="true" onleftclick="Gateways"/>
+						<area name="settings" hint="SET: Change client settings" top="T10" left="R58" height="32" width="24" image="settings-normal.gif" downimage="settings-down.gif" transparent="true" onleftclick="Settings"/>
+						<area name="logoff" hint="OFF: Log off from the current acount" top="T10" left="R28" height="32" width="24" image="logoff-normal.gif" downimage="logoff-down.gif" transparent="true" onleftclick="LogOff"/>
+					</area>
+				</area>
+				<area name="topright" type="border" subtype="right" top="T0" left="R8" width="8" height="64" image="top-right.gif">
+					<area name="toprightcorner" type="corner" subtype="topright" top="T0" left="L0" width="8" height="8"/>
+				</area>
+			</area>
+			<area name="leftborder" type="border" subtype="left" top="T64" left="0" width="8" bottom="B8" image="bevel-v.gif"/>
+			<area name="client" type="client" top="T64" left="L8" right="R8" bottom="B8" color="#FFFFFF">
+				<area name="roster" top="T0" left="L0" right="R16" bottom="B0"/>
+				<area name="rosterscroll" top="T0" left="R16" right="R0" bottom="B0"/>
+			</area>
+			<area name="rightborder" type="border" subtype="right" top="T64" left="R8" width="8" bottom="B8" image="bevel-v.gif"/>
+			<area name="bottomborder" top="B8" left="L0" right="R0" height="8">
+				<area name="bottomleftcorner" type="corner" subtype="bottomleft" top="T0" left="L0" width="8" height="8" image="corner-bl.gif"/>
+				<area name="center" type="border" subtype="bottom" top="T0" left="L8" right="R8" height="8" image="bevel-h.gif"/>
+				<area name="bottomrightcorner" type="corner" subtype="bottomright" top="T0" left="R8" width="8" height="8" image="corner-br.gif"/>
+			</area>
+		</area>
+	</window>
+	<window name="connecting">
+		<title>Connecting...</title>
+		<icon>icon.ico</icon>
+		<bounds minwidth="200" maxwidth="200" minheight="100" maxheight="100"/>
+		<area name="status" type="drag" top="T0" left="L0" right="R0" bottom="B0" text="$status$" texthalign="center" textvalign="middle" textfont="courier" textsize="10" image="connectingbg.gif" onrightclick="menu">
+			<area name="title" top="T0" left="L0" right="R0" height="12" text="Marvin Jabber Client" textsize="8" textfont="Courier"/>
+			<area name="cancel" type="close" hint="Cancel conection" top="B32" left="50%-32" width="16" height="16" image="round-normal.gif" downimage="round-down.gif" transparent="true"/>
+			<area name="cancel label" type="close" top="B32" height="16" left="50%-32+20" right="R0" text="Cancel" texthalign="left" textvalign="middle" textfont="courier" textsize="8"/>
+		</area>
+	</window>
+	<window name="message">
+		<title>Message</title>
+		<icon>icon.ico</icon>
+		<bounds minwidth="418" maxwidth="0" minheight="120" maxheight="0"/>
+		<area name="toplevel" top="T0" left="L0" right="R0" bottom="B0" onrightclick="menu">
+			<area name="topborder" top="T0" left="L0" right="R0" height="16">
+				<area name="topleftcorner" type="corner" subtype="topleft" top="T0" left="L0" width="8" height="16" image="top-left.gif"/>
+				<area name="caption" type="drag" top="T0" left="L8" right="R8" height="16" image="top-middle.gif" texthalign="center" textvalign="middle" textfont="courier" textsize="8" textcolor="#000000" text="Message: $recipientnick$">
+					<area name="min" type="min" top="T4" left="R18" width="8" height="8" image="minmax.gif"/>
+					<area name="close" type="close" top="T4" left="R8" width="8" height="8" image="minmax.gif"/>
+					<area name="shadededge" top="B4" left="L0" right="R0" bottom="B0" image="northshade.gif"/>
+				</area>
+				<area name="toprightcorner" type="corner" subtype="topright" top="T0" left="R8" width="8" height="16" image="top-right.gif"/>
+			</area>
+			<area name="leftborder" type="border" subtype="left" top="T16" left="0" width="8" bottom="B40" image="bevel-v.gif"/>
+			<area name="client" type="client" top="T16" left="L8" right="R8" bottom="B40" color="#FFFFFF">
+				<area name="messagepanes" type="pane" subtype="parent" top="T0" left="L0" width="100%" bottom="B0">
+					<area name="historypane" type="pane" subtype="top">
+						<area name="log" top="T0" left="L0" bottom="B32" right="R16"/>
+						<area name="logscroll" top="T0" left="R16" bottom="B32" width="16"/>
+						<area name="formatinng" type="pane" subtype="drag" target="pane1" top="B32" left="L0" height="32" width="100%" image="formatbarbg.gif">
+							<area name="bold" top="T5" left="L8" height="22" width="22" onleftclick="bold">
+								<state name="off" image="bold-up.gif"/>
+								<state name="on" image="bold-down.gif"/>
+							</area>
+							<area name="italic" top="T5" left="L30" height="22" width="22" onleftclick="italic">
+								<state name="off" image="italic-up.gif"/>
+								<state name="on" image="italic-down.gif"/>
+							</area>
+							<area name="underline" top="T5" left="L52" height="22" width="22" onleftclick="underline">
+								<state name="off" image="underline-up.gif"/>
+								<state name="on" image="underline-down.gif"/>
+							</area>
+							<area name="font" top="T7" left="L82" height="16" width="135" color="#888888" text="$font$" textsize="7" textfont="Ariel" texthalign="left" onleftclick="font"/>
+							<area name="fontbutton" top="T7" left="L82+135" height="16" width="16" onleftclick="font">
+								<state name="closed" image="downarrow-normal.gif" transparent="true"/>
+								<state name="open" image="downarrow-down.gif" transparent="true"/>
+							</area>
+							<area name="size" top="T7" left="L241" height="16" width="32" color="#888888" text="$size$" textsize="7" textfont="Ariel" texthalign="left" onleftclick="size"/>
+							<area name="sizebutton" top="T7" left="L241+32" height="16" width="16" onleftclick="size">
+								<state name="closed" image="downarrow-normal.gif" transparent="true"/>
+								<state name="open" image="downarrow-down.gif" transparent="true"/>
+							</area>
+							<area name="history" top="T8" left="R100" height="16" width="16" onleftclick="history">
+								<state name="hide" image="round-normal.gif"/>
+								<state name="show" image="round-down.gif"/>
+							</area>
+							<area name="history text" top="T0" left="R80" right="R0" bottom="B0" texthalign="left" text="History" textfont="courier" textsize="8" onleftclick="history"/>
+						</area>
+					</area>
+					<area name="messagepane" type="pane" subtype="bottom">
+						<area name="message" top="T0" left="L0" height="100%" right="R16"/>
+						<area name="messagescroll" top="T0" left="R16" height="100%" width="16"/>
+					</area>
+				</area>
+			</area>
+			<area name="rightborder" type="border" subtype="right" top="T16" left="R8" width="8" bottom="B40" image="bevel-v.gif"/>
+			<area name="bottomborder" top="B40" left="L0" right="R0" height="40">
+				<area name="bottomleftborder" type="border" subtype="left" top="T0" left="L0" width="8" bottom="B8" image="bottom-left.gif"/>
+				<area name="bottomleftcorner" type="corner" subtype="bottomleft" top="B8" left="L0" width="8" height="8" image="corner-bl.gif">
+					<area name="shadededge" top="B4" left="L4" right="R0" bottom="B0" image="northshade.gif"/>
+				</area>
+				<area name="center" top="T0" left="L8" right="R8" bottom="B0" image="top-middle.gif">
+					<area name="recipientshowstate" hint="$recipientshowstate$ ($recipientstatus$)" top="T12" left="L0" width="16" height="16">
+						<state name="available" image="available.gif" transparent="true"/>
+						<state name="away" image="away.gif" transparent="true"/>
+						<state name="chat" image="chat.gif" transparent="true"/>
+						<state name="xa" image="xa.gif" transparent="true"/>
+						<state name="dnd" image="dnd.gif" transparent="true"/>
+					</area>
+					<area name="recipient name" hint="$recipientjid$" top="T0" left="L16+4" right="R64" bottom="B0" texthalign="left" textvalign="middle" text="$recipientnick$" textfont="courier" textsize="8"/>
+					<area name="send/reply button" hint="Send message" top="T12" left="R64" width="16" height="16" image="round-normal.gif" downimage="round-down.gif" transparent="true" onleftclick="send/reply"/>
+					<area name="send/reply" top="T0" left="R64+16+4" right="R0" bottom="B0" texthalign="left" text="$send/reply$" textfont="courier" textsize="8"/>
+					<area name="bottomborder" type="border" subtype="bottom" top="B8" left="L0" right="R0" bottom="B0">
+						<area name="shadededge" top="B4" left="L0" right="R0" bottom="B0" image="northshade.gif"/>
+					</area>
+				</area>
+				<area name="bottomrightborder" type="corner" subtype="bottomright" top="T0" left="R8" width="8" bottom="B8" image="bottom-right.gif"/>
+				<area name="bottomrightcorner" type="corner" subtype="bottomright" top="B8" left="R8" width="8" height="8" image="corner-br.gif">
+					<area name="shadededge" top="B4" left="L0" right="R4" bottom="B0" image="northshade.gif"/>
+				</area>
+			</area>
+		</area>
+	</window>
+	<window name="login">
+		<title>Login</title>
+		<icon>available16.gif</icon>
+		<bounds minwidth="320" maxwidth="320" minheight="240" maxheight="240"/>
+		<area name="toplevel" top="T0" left="L0" right="R0" bottom="B0" image="loginbg.gif" onrightclick="menu">
+			<area name="titlebar" type="drag" top="T0" left="L0" right="R0" height="12" textfont="courier" textsize="8" text="Marvin Login">
+				<area name="min" type="min" top="T4" left="R26" width="8" height="8" image="minmax.gif"/>
+				<area name="close" type="close" top="T4" left="R16" width="8" height="8" image="minmax.gif"/>
+			</area>
+			<area name="client" type="client" top="T12" left="L8" right="R8" bottom="B8">
+				<area name="details" top="T12" left="L4" right="R4" height="184">
+					<area name="labels" top="T0" left="L0" width="50%" bottom="B0">
+						<area name="username_label" top="T0" left="L0" height="16" right="R0" texthalign="left" textvalign="top" textfont="arial" textsize="10" textcolor="#000000" text="Username:"/>
+						<area name="password_label" top="T24" left="L0" height="16" right="R0" texthalign="left" textvalign="top" textfont="arial" textsize="10" textcolor="#000000" text="Password:"/>
+						<area name="server_label" top="T48" left="L0" height="16" right="R0" texthalign="left" textvalign="top" textfont="arial" textsize="10" textcolor="#000000" text="Server:"/>
+						<area name="resource_label" top="T72" left="L0" height="16" right="R0" texthalign="left" textvalign="top" textfont="arial" textsize="10" textcolor="#000000" text="Resource:"/>
+						<area name="savepassword_label" top="T108" left="L0" height="16" right="R0" texthalign="left" textvalign="top" textfont="arial" textsize="10" textcolor="#000000" text="Save Password:"/>
+						<area name="autologin_label" top="T132" left="L0" height="16" right="R0" texthalign="left" textvalign="top" textfont="arial" textsize="10" textcolor="#000000" text="Login Automatically:"/>
+						<area name="newacount_label" top="T168" left="L0" height="16" right="R0" texthalign="left" textvalign="top" textfont="arial" textsize="10" textcolor="#000000" text="New Account:"/>
+					</area>
+					<area name="inputs" top="T0" left="50%" right="R0" bottom="B0">
+						<area name="username" top="T0" left="L0" height="16" right="R0" color="#FFFFFF"/>
+						<area name="password" top="T24" left="L0" height="16" right="R0" color="#FFFFFF"/>
+						<area name="server" top="T48" left="L0" height="16" right="R0" color="#FFFFFF"/>
+						<area name="resource" top="T72" left="L0" height="16" right="R0" color="#FFFFFF"/>
+						<area name="savepassword" top="T108" left="L0" height="16" width="16" onleftclick="savepassword">
+							<state name="unchecked" image="round-normal.gif"/>
+							<state name="checked" image="round-down.gif"/>
+						</area>
+						<area name="autologin" top="T132" left="L0" height="16" width="16" onleftclick="autologin">
+							<state name="unchecked" image="round-normal.gif"/>
+							<state name="checked" image="round-down.gif"/>
+						</area>
+						<area name="newacount" top="T168" left="L0" height="16" width="16" onleftclick="newacount">
+							<state name="unchecked" image="round-normal.gif"/>
+							<state name="checked" image="round-down.gif"/>
+						</area>
+					</area>
+				</area>
+				<area name="buttons" top="T184+12" left="L0" right="R0" height="24">
+					<area name="connect" hint="Log in to Jabber" onleftclick="connect" top="T8" left="R75" width="16" height="16" image="round-normal.gif" downimage="round-down.gif" transparent="true"/>
+					<area name="connect label" onleftclick="connect" top="T8" height="16" left="R55" right="R0" text="Log in" texthalign="left" textvalign="middle" textfont="courier" textsize="8"/>
+				</area>
+			</area>
+		</area>
+	</window>
+</skin>
+

@@ -1,0 +1,675 @@
+<?xml version="1.0"?>
+<!DOCTYPE skindef SYSTEM "skindef.dtd">
+<?xml-stylesheet type="text/xsl" href="skindef.xsl"?>
+<!--POSSIBLE IDEA: Valid values for the required attrbute are: yes, no, optional and recomended-->
+<!--REVISION LOG STARTED 4/July/2001:
+4/July/2001 Added savepassword and autologin areas to login window and checkbox resources
+23/September/2001 Changed prefs mesage to settings message in roster
+22/November/2001 Added history gui sutff: history resource and history area in message window
+26/November/2001 "Gateways" message in Roster window is now implemented
+1/December/2001 Changed stuff around for new <state> tag
+18/December/2001 Made some messages global
+20/December/2001 Added "menu" message
+4/Janruay/2002 Changed to reflect addition  "Text Variables" to SkinX
+4/January/2002 Added $status$ and $showstate$ text variables and added showstate  area to roster window
+4/January/2002 Added $recipientstatus$ and $recipientshowstate$ text variables and added recipientshowstate area to message window
+6/January/2002 Added send/reply area (with send and reply states)
+20/Janurary/2002 Added searchlog message
+24/January/2002 Added $messageevent$ text variable to message window, added messageevent area to message window
+27/February/2002 Added changepassword message
+25/March/2002 Added topmost area and message to message window
+21/April/2002 Added togglesounds message
+-->
+<skindef name="marvin">
+	<description>
+		This is the skin definition file for my Euphoria Jabber Client. Note that while Marvin is in heavy development this information can and probably will change...
+	</description>
+	<resource name="scrollbar" required="true">
+		<description>
+			Contains resources for the scrollbar control.
+		</description>
+		<resource name="up" required="true">
+			<description>
+				Image for the up button of the scrollbar control, should be the same size as down resource.
+			</description>
+		</resource>
+		<resource name="down" required="true">
+			<description>
+				Image for the down button of the scrollbar control, should be the same size as up resource.
+			</description>
+		</resource>
+		<resource name="background" required="true">
+			<description>
+				Image for the background of the scrollbar control, will be tiled.
+			</description>
+		</resource>
+		<resource name="thumb" required="true">
+			<description>
+				Image for the thumb of the scrollbar.
+			</description>
+		</resource>
+	</resource>
+	<resource name="roster" required="true">
+		<description>
+			Contains resources for the roster.
+		</description>
+		<resource name="group" required="true">
+			<description>
+				Contains expanded and collapsed versions of the icon for group items on the roster.
+			</description>
+			<resource name="expanded" required="true">
+				<description>
+					Expanded version of the icon for group items on the roster.
+				</description>
+			</resource>
+			<resource name="collapsed" required="true">
+				<description>
+					Collapsed version of the icon for group items on the roster.
+				</description>
+			</resource>
+		</resource>
+		<resource name="item" required="false">
+			<description>
+				Images for items (contacts) on the roster. Should be 16x16. If no images are supplied then no images will be used.
+			</description>
+			<resource name="offline" required="false">
+				<description>
+					Image for offline items (contacts) on the roster. Should be 16x16. If no image is supplied then no image will be used.
+				</description>
+			</resource>
+			<resource name="available" required="false">
+				<description>
+					Image for available items (contacts) on the roster. Should be 16x16. If no image is supplied then no image will be used.
+				</description>
+			</resource>
+			<resource name="chat" required="false">
+				<description>
+					Image for items (contacts) on the roster who are Free For Chat. Should be 16x16. If no image is supplied then the available image will be used.									</description>
+			</resource>
+			<resource name="away" required="false">
+				<description>
+					Image for items (contacts) on the roster who are away. Should be 16x16. If no image is supplied then the available image will be used.
+				</description>
+			</resource>
+			<resource name="xa" required="false">
+				<description>
+					Image for items (contacts) on the roster who are in extended away state. Should be 16x16. If no image is supplied then the away image will be used.								</description>
+			</resource>
+			<resource name="dnd" required="false">
+				<description>
+					Image for items (contacts) on the roster who are in dnd state. Should be 16x16. If no image is supplied then the away image will be used.										</description>
+			</resource>
+		</resource>
+	</resource>
+	<resource name="systray" required="true">
+		<description>
+			Images for the system tray icon. Will be resized to 16x16 with 16 colors.
+		</description>
+		<resource name="available" required="true">
+			<description>
+					Image to be shown in system tray when user's state is available. Will be resized to 16x16 with 16 colors.
+				</description>
+		</resource>
+		<resource name="chat" required="false">
+			<description>
+					Image to be shown in system tray when user's state is free for chat. Will be resized to 16x16 with 16 colors.
+				</description>
+		</resource>
+		<resource name="away" required="false">
+			<description>
+						Image to be shown in system tray when user's state is away. Will be resized to 16x16 with 16 colors.
+				</description>
+		</resource>
+		<resource name="xa" required="false">
+			<description>
+						Image to be shown in system tray when user's state is extended away. Will be resized to 16x16 with 16 colors.
+				</description>
+		</resource>
+		<resource name="dnd" required="false">
+			<description>
+						Image to be shown in system tray when user's state is do not disturb. Will be resized to 16x16 with 16 colors.
+				</description>
+		</resource>
+		<resource name="message" required="false">
+			<description>
+					Image to be shown in system tray when a message is waiting. Will be resized to 16x16 with 16 colors.
+				</description>
+		</resource>
+	</resource>
+	<message name="LogOff" required="true">
+		<description>
+			When the application recieves this message it will log the user off of the Jabber network, close the Roster window and show the Login window.
+		</description>
+	</message>
+	<message name="Settings" required="true">
+		<description>
+			When the application recieves this message it will show the Settings window.
+		</description>
+	</message>
+	<message name="SetAvailable" required="true">
+		<description>
+			When the application recieves this message it will set the users status to "Available".
+		</description>
+	</message>
+	<message name="SetChat" required="true">
+		<description>
+			When the application recieves this message it will set the users status to "Free For Chat".
+		</description>
+	</message>
+	<message name="SetAway" required="true">
+		<description>
+			When the application recieves this message it will set the users status to "Away".
+		</description>
+	</message>
+	<message name="SetXA" required="true">
+		<description>
+			When the application recieves this message it will set the users status to "Extended Away".
+		</description>
+	</message>
+	<message name="SetDND" required="true">
+		<description>
+			When the application recieves this message it will set the users status to "Do Not Disturb".
+		</description>
+	</message>
+	<message name="SetCustom" required="true">
+		<description>
+			When the application recieves this message it will open up the Set Custom Status window.
+		</description>
+	</message>
+	<message name="ChangeSkin" required="true">
+		<description>
+			When the application recieves this message it will show the Change Skin window.
+		</description>
+	</message>
+	<message name="AddContact" required="true">
+		<description>
+			When the application recieves this message it will open up the add contact window.
+		</description>
+	</message>
+	<message name="Gateways" required="true">
+		<description>
+			When the application recieves this message it will show the Gateway Settings window.
+		</description>
+	</message>
+	<message name="Find" required="true">
+		<description>
+			When the application recieves this message it will show the Find Users window.
+			NOT YET IMPLEMENTED
+		</description>
+	</message>
+	<message name="Menu" required="true">
+		<description>
+			This message will display a popup menu containing all the functions required for the current window. The idea here is that if new features are added old skins will still be usable...
+		</description>
+	</message>
+	<message name="ChangePassword" required="false">
+		<description>
+			This message will bring up a dialog that allows the user to change their password.
+		</description>
+	</message>
+	<message name="ToggleSounds" required="false">
+		<description>
+			Will toggle sounds on or off.
+		</description>
+	</message>
+	<window name="roster">
+		<description>
+			This is the main window of the client, it shows a list of all contacts on the users roster and alows the user to send messages to them.
+		</description>
+		<area name="roster" required="true">
+			<description>
+				The main part of the roster control will be placed in this area.
+			</description>
+		</area>
+		<area name="rosterscroll" required="true">
+			<description>
+				The scrollbar used to scroll the roster list will be places in this area.
+			</description>
+		</area>
+		<area name="topmost" required="false">
+			<description>
+				This area's state is changed to reflect whether the roster is currently a topmost window (hovers over other windows). I sugest that this area send the "topmost" message on left click, this will make it work like a toggle.
+			</description>
+			<state name="on">
+				<description>
+					The image(s)  to display when the roster is a topmost window
+				</description>
+			</state>
+			<state name="off">
+				<description>
+					The image(s)  to display when the roster is not a topmost window
+				</description>
+			</state>
+		</area>
+		<area name="showstate" required="false">
+			<description>
+				This area's state is changed to reflect the users current show state.
+			</description>
+			<state name="available">
+				<description>
+					The image(s) to display when the users state is "Available" (normal)
+				</description>
+			</state>
+			<state name="chat">
+				<description>
+					The image(s) to display when the users state is "Free For Chat"
+				</description>
+			</state>
+			<state name="away">
+				<description>
+					The image(s) to display when the users state is "Away"
+				</description>
+			</state>
+			<state name="xa">
+				<description>
+					The image(s) to display when the users state is "Extended Away"
+				</description>
+			</state>
+			<state name="dnd">
+				<description>
+					The image(s) to display when the users state is "Do Not Disturb
+				</description>
+			</state>
+		</area>
+		<message name="SendMessage" required="false">
+			<description>
+				When the application recieves this message it will open up a message window to any users currently selected in the roster control. If no users are selected when this message is recieved it will have no effect.
+			</description>
+		</message>
+		<message name="RemoveContact" required="true">
+			<description>
+				When the application recieves this message it will remove the selected contact from the roster (after asking the user for conformation).
+			</description>
+		</message>
+		<message name="Topmost" required="false">
+			<description>
+				Toggles whether the window is topmost or not. See the "topmost" area/
+			</description>
+		</message>
+		<textvariable name="showstate">
+			<description>
+				This variable will changed to one of the follwing to reflect the users current show state: Available, Free For Chat, Away, Extended Away or Do Not Disturb
+			</description>
+		</textvariable>
+		<textvariable name="status">
+			<description>
+				This variable will changed to reflect the users status (a custom string that the user can change, is the same as show state by default)
+			</description>
+		</textvariable>
+	</window>
+	<window name="connecting">
+		<description>
+			This window is displayed while the client is connecting. It's purpose is to inform th user of the current status of the connection, it also alows the user to cancel the connection (by closing the window).
+		</description>
+		<textvariable name="status">
+			<description>
+				This variable will be updated to the current connection status (eg: "Connecting".. "Getting Roster" etc).
+			</description>
+		</textvariable>
+	</window>
+	<window name="message">
+		<description>
+			This window is used for both sending and recieving of messages. It contains a log control and a message control. Depending on user settings the message control may be used for viewing incoming messages and composing outgoing messages or just for composing messages. Also depending on user settings the log may show the log of a current chat or all the logs for a roster item.
+		</description>
+		<area name="log" required="true">
+			<description>
+				The main part of the log control will be placed in this area. The log control displays either a log of the current chat or a complete log depending on user settings. It may also be the only place incoming messages are displayed (also depending on user settings).
+			</description>
+		</area>
+		<area name="logscroll" required="true">
+			<description>
+				The scrollbar control for scrolling the log control will be placed in this area.
+			</description>
+		</area>
+		<area name="message" required="true">
+			<description>
+				The main part of the message control will be placed in this area. The message control is used for composing outgoing messages and, depending on user settings, for displaying new incoming ones.
+			</description>
+		</area>
+		<area name="messagescroll" required="true">
+			<description>
+				The scrollbar control for scrolling the message control will be placed in this area.
+			</description>
+		</area>
+		<area name="bold" required="true">
+			<description>
+				This area's state will be changed to reflect the bold attribute of the currently selected text. I recomend that this area send the "bold" message on left click to make it work like a toggle.
+			</description>
+			<state name="off">
+				<description>
+					The area will be set to use this state when it is off.
+				</description>
+			</state>
+			<state name="on">
+				<description>
+					The area will be set to use this state when it is on.
+				</description>
+			</state>
+		</area>
+		<area name="italic" required="true">
+			<description>
+				This area's state will be changed to reflect the italic attribute of the currently selected text. I recomend that this area send the "italic" message on left click to make it work like a toggle.
+			</description>
+			<state name="off">
+				<description>
+					The area will be set to use this state when it is off.
+				</description>
+			</state>
+			<state name="on">
+				<description>
+					The area will be set to use this state when it is on.
+				</description>
+			</state>
+		</area>
+		<area name="underline" required="true">
+			<description>
+				This area's state will be changed to reflect the underline attribute of the currently selected text. I recomend that this area send the "underline" message on left click to make it work like a toggle.
+			</description>
+			<state name="off">
+				<description>
+					The area will be set to use this state when it is off.
+				</description>
+			</state>
+			<state name="on">
+				<description>
+					The area will be set to use this state when it is on.
+				</description>
+			</state>
+		</area>
+		<area name="fontbutton" required="true">
+			<description>
+				 This area's state is changed when the font drop down is activated. I recomend that this area send the "font" message on left click.
+			</description>
+			<state name="show">
+				<description>
+					The image attributes to use when the font drop down is droped down.
+				</description>
+			</state>
+			<state name="hide">
+				<description>
+					The image attributes to use when the font drop down is not droped down.
+				</description>
+			</state>
+		</area>
+		<area name="sizebutton" required="true">
+			<description>
+				 This area's state is changed when the size  drop down is activated. I recomend that this area send the "size" message on left click.
+			</description>
+			<state name="show">
+				<description>
+					The image attributes to use when the size drop down is droped down.
+				</description>
+			</state>
+			<state name="hide">
+				<description>
+					The image attributes to use when the size drop down is not droped down.
+				</description>
+			</state>
+		</area>
+		<area name="history" required="true">
+			<description>
+				This area's state will be changed to reflect whether message history is shown or not. I recomend that this area send the "hisotry" message on left click to make it work like a toggle.
+			</description>
+			<state name="show">
+				<description>
+					The area will be set to use this state for it's images when the history is shown.
+				</description>
+			</state>
+			<state name="hide">
+				<description>
+					The area will be set to use this state for it's images when the history is hidden.
+				</description>
+			</state>
+		</area>
+		<area name="recipientshowstate" required="false">
+			<description>
+				This area's state is changed to reflect the recipients current show state.
+			</description>
+			<state name="available">
+				<description>
+					The image(s) to display when the recipients state is "Available" (normal)
+				</description>
+			</state>
+			<state name="chat">
+				<description>
+					The image(s) to display when the recipients state is "Free For Chat"
+				</description>
+			</state>
+			<state name="away">
+				<description>
+					The image(s) to display when the recipients state is "Away"
+				</description>
+			</state>
+			<state name="xa">
+				<description>
+					The image(s) to display when the recipients state is "Extended Away"
+				</description>
+			</state>
+			<state name="dnd">
+				<description>
+					The image(s) to display when the recipients state is "Do Not Disturb
+				</description>
+			</state>
+		</area>
+		<area name="send/reply" required="false">
+			<description>
+				This area's state is changed to reflect whether the message pane of the message window is being used to compose a message or view a message (see send/reply message below).
+			</description>
+			<state name="send">
+				<description>
+					The area will be set to this state when the user is able to compose message (when there is not a message displayed in the message pane)
+				</description>
+			</state>
+			<state name="reply">
+				<description>
+					The area will be set ot this state when a message is displayed in the message pane.
+				</description>
+			</state>
+		</area>
+		<area name="messageevent" required="false">
+			<description>
+				This area's state is changed when message events are recieved
+			</description>
+			<state name="none">
+				<description>
+					The area will be set to this state when no message events are to be shown.
+				</description>
+			</state>
+			<state name="composing">
+				<description>
+					The area will be set ot this state when the remote user is composing a reply.
+				</description>
+			</state>
+		</area>
+		<area name="topmost" required="false">
+			<description>
+				This area's state is changed to reflect whether the window is currently a topmost window (hovers over other windows). I sugest that this area send the "topmost" message on left click, this will make it work like a toggle.
+			</description>
+			<state name="on">
+				<description>
+					The image(s)  to display when the roster is a topmost window
+				</description>
+			</state>
+			<state name="off">
+				<description>
+					The image(s)  to display when the roster is not a topmost window
+				</description>
+			</state>
+		</area>
+		<message name="send/reply" required="true">
+			<description>
+				This is a dual purpose message, when the user is composing a message it will cause that message to be sent. When a incoming message is displayed in the message control (this only happens when certain user settings are in force) it will cause the message to be removed so that the user can compose a reply.
+			</description>
+		</message>
+		<message name="font" required="true">
+			<description>
+				Causes the font dropdown to drop down. See the "font" area.
+			</description>
+		</message>
+		<message name="size" required="true">
+			<description>
+				Causes the font size dropdown to drop down. See the "size" area.
+			</description>
+		</message>
+		<message name="bold" required="true">
+			<description>
+				Causes the bold attribute of currently selected text to be toggled. See the "bold" area.
+			</description>
+		</message>
+		<message name="italic" required="true">
+			<description>
+				Causes the italic attribute of currently selected text to be toggled. See the "italic" area.
+			</description>
+		</message>
+		<message name="underline" required="true">
+			<description>
+				Causes the underline attribute of currently selected text to be toggled. See the "underline" area.
+			</description>
+		</message>
+		<message name="history" required="true">
+			<description>
+				Causes the display of message history to be toggled. See the "history" area.
+			</description>
+		</message>
+		<message name="searchlog" required="true">
+			<description>
+				Brings up a search dialog that allows the user to search the log of their current conversation and the full message history (if history is currently shown)
+			</description>
+		</message>
+		<message name="Topmost" required="false">
+			<description>
+				Toggles whether the window is topmost or not. See the "topmost" area.
+			</description>
+		</message>
+		<textvariable name="font">
+			<description>
+				This variable is set to the current font.
+			</description>
+		</textvariable>
+		<textvariable name="size">
+			<description>
+				This variable is set to the current font size.
+			</description>
+		</textvariable>
+		<textvariable name="recipientnick">
+			<description>
+				This variable is set to the Nick or JID (if no nick is set) of the recipient or the word "Multiple"
+			</description>
+		</textvariable>
+		<textvariable name="recipientjid">
+			<description>
+				This variable is set to the JID of the recipient or the word "Multiple"
+			</description>
+		</textvariable>
+		<textvariable name="recipientshowstate">
+			<description>
+				This variable will changed to one of the follwing to reflect the recipients current show state: Available, Free For Chat, Away, Extended Away or Do Not Disturb
+			</description>
+		</textvariable>
+		<textvariable name="recipientstatus">
+			<description>
+				This variable will changed to reflect the recipients status (a custom string that a user can change, is the same as show state by default)
+			</description>
+		</textvariable>
+		<textvariable name="send/reply">
+			<description>
+				This variable will be set to "Send" when the user is composing a message. If a incoming message is displayed in the message control (this only happens when certain user settings are in force) it will be changed to "Reply".
+			</description>
+		</textvariable>
+		<textvariable name="messageevent">
+			<description>
+				This variable will be set to "User is replying" when a "composing" message event is recieved. At other times it will be set to nothing.
+			</description>
+		</textvariable>
+	</window>
+	<window name="login">
+		<description>
+			This window is used to allow the user to enter login details then log in.
+		</description>
+		<area name="username" required="true">
+			<description>
+				A edit control will be placed in this area to allow the user to enter they're username.
+			</description>
+		</area>
+		<area name="password" required="true">
+			<description>
+				A edit control will be placed in this area to allow the user to enter they're password.
+			</description>
+		</area>
+		<area name="server" required="true">
+			<description>
+				A edit control will be placed in this area to allow the user to enter the Jabber server they wish to connect to.
+			</description>
+		</area>
+		<area name="resource" required="true">
+			<description>
+				A edit control will be placed in this area to allow the user to enter the resource (location) they wish to connect with.
+			</description>
+		</area>
+		<area name="savepassword" required="true">
+			<description>
+				This area's state is changed to reflect whether the users password will be saved or not. I recomend that this area send the "savepassword" message on left clicks, in this way it will act like a check box.
+			</description>
+			<state name="checked">
+				<description>
+					The image(s)  to display when the password will be saved.
+				</description>
+			</state>
+			<state name="unchecked">
+				<description>
+					The image(s) to display when the password will not be saved.
+				</description>
+			</state>
+		</area>
+		<area name="autologin" required="true">
+			<description>
+				This area's state is changed to reflect whether Marvin will automaticaly log on. I recomend that this area send the "autologin" message on left clicks, in this way it will act like a check box.
+			</description>
+			<state name="checked">
+				<description>
+					The image(s)  to display when marvin will auto login
+				</description>
+			</state>
+			<state name="unchecked">
+				<description>
+					The image(s) to display when marvin will not auto login
+				</description>
+			</state>
+		</area>
+		<area name="newacount" required="true">
+			<description>
+				This area's state is changed to reflect whether a new acount should be created. I recomend that this area send the "newacount" message on left clicks, in this way it will act like a check box.
+			</description>
+			<state name="checked">
+				<description>
+					The image(s)  to display when a new acount should be created
+				</description>
+			</state>
+			<state name="unchecked">
+				<description>
+					The image(s) to display when a new acount should not be created
+				</description>
+			</state>
+		</area>
+		<message name="connect" required="true">
+			<description>
+				When the application recieves this message it will connect the user using details suplied in the login window.
+			</description>
+		</message>
+		<message name="savepassword" required="true">
+			<description>
+				When the application recieves this message it will toggle the whether the password will be saved or not. See the "savepassword" area.
+			</description>
+		</message>
+		<message name="autologin" required="true">
+			<description>
+				When the application recieves this message it will toggle the whether the application will auto login or not. See the "autologin" area.
+			</description>
+		</message>
+		<message name="newacount" required="true">
+			<description>
+				When the application recieves this message it will toggle the whether a new acount should be created or not. See the "newacount" area.
+			</description>
+		</message>
+	</window>
+</skindef>

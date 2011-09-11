@@ -1,0 +1,179 @@
+-- wndlogin window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include wndGenericFields/wndGenericFields_decs.ew
+include wndGenericFields/wndGenericFields_defs.ew
+
+-- Fixed version of the function of the same name in win32lib
+-- peek4u changed to peek4s to work with negative mouse coords in multimonitor systems
+object VOID
+function getPointerPos()
+    atom tmpMem
+    sequence xy
+
+    tmpMem = acquire_mem(0, 8)
+
+    VOID = w32Func(xGetCursorPos,{tmpMem})
+
+    xy = peek4s({tmpMem, 2})
+
+    release_mem( tmpMem)
+
+    return xy
+end function
+
+global procedure wndlogin_Open()
+    openWindow(wndLogin,Normal)
+    ctlrichedit_SetText(wndlogin_Username,CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,
+                        settings_Get("Login","Username"))
+    if settings_Get("Login","SavePassword") then
+        ctlrichedit_SetText(wndlogin_Password,CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,
+                            settings_Get("Login","Password"))
+    end if
+    ctlrichedit_SetText(wndlogin_Server,CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,
+                    settings_Get("Login","Server"))
+    ctlrichedit_SetText(wndlogin_Resource,CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,
+                    settings_Get("Login","Resource"))
+    if settings_Get("Login","SavePassword") then
+        ctltoggle_SetState(wndlogin_SavePassword,1)
+        ctlrichedit_SetText(wndlogin_Password,CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,settings_Get("Login","Password")-15)
+    else
+        ctltoggle_SetState(wndlogin_SavePassword,0)
+        ctlrichedit_SetText(wndlogin_Password,CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,"")
+    end if
+    ctltoggle_SetState(wndlogin_AutoLogin,settings_Get("Login","AutoLogin"))
+end procedure
+
+atom noshutdown
+noshutdown = 0
+procedure onClose_wndLogin()
+    if noshutdown then
+        noshutdown = 0
+    else
+        skinx_RemoveWindow(wndLogin)
+        closeWindow(wndEventProcessor)
+    end if
+end procedure
+onClose[wndLogin] = routine_id("onClose_wndLogin")
+
+global procedure wndlogin_Close()
+    closeWindow(wndLogin)
+end procedure
+
+global procedure wndlogin_Connect(sequence server, sequence username, sequence password, sequence resource, atom newacount)
+    wndconnecting_Open()
+    if not jabber_Connect(server, username, password, resource,newacount) then
+        puts(1,"Connect failed\n")
+        abort(1)
+    end if
+end procedure
+
+procedure wndLoginEvent(atom id,sequence event)
+    sequence server,username,password,resource
+    sequence mousepos
+    object verify
+    atom newacount
+    if equal(event,"connect") then  
+        server   = ctlrichedit_GetText(wndlogin_Server   ,CTLRICHEDIT_TEXT)
+        username = ctlrichedit_GetText(wndlogin_Username ,CTLRICHEDIT_TEXT)
+        password = ctlrichedit_GetText(wndlogin_Password ,CTLRICHEDIT_TEXT)
+        resource = ctlrichedit_GetText(wndlogin_Resource ,CTLRICHEDIT_TEXT)
+
+        settings_Save("Login","Server",server)
+        settings_Save("Login","Username",username)
+        if ctltoggle_GetState(wndlogin_SavePassword) then
+            settings_Save("Login","SavePassword",1)
+            settings_Save("Login","Password",password+15) --just so it's not visible to the stupidest users, what else can you do?
+        else    
+            settings_Save("Login","SavePassword",0)
+            settings_Save("Login","Password","")
+        end if
+        settings_Save("Login","Resource",resource)
+        settings_Save("Login","AutoLogin",ctltoggle_GetState(wndlogin_AutoLogin))
+        
+        newacount = ctltoggle_GetState(wndlogin_NewAcount)
+        
+        if newacount then
+            -- Verify the password
+            verify = wndgenericfields_Show("Create new acount","Please re-enter your password to confirm",{{"Password","",propTypePassword,{}}})
+            if atom(verify) then
+                return
+            elsif not equal(verify[1][2],password) then
+                ShowError("Passwords do not match")
+                return
+            end if
+        end if
+        
+        ctltoggle_SetState(wndlogin_NewAcount,0)
+        
+        noshutdown = 1
+        wndlogin_Close()
+        wndlogin_Connect(server,
+                         username,
+                         password,
+                         resource,
+                         newacount)
+    elsif equal(event,"newacount") then
+        ctltoggle_ToggleState(wndlogin_NewAcount)
+    elsif equal(event,"autologin") then
+        ctltoggle_ToggleState(wndlogin_AutoLogin)
+        if not ctltoggle_GetState(wndlogin_SavePassword) then
+            ctltoggle_SetState(wndlogin_AutoLogin,0)
+        end if
+    elsif equal(event,"savepassword") then
+        ctltoggle_ToggleState(wndlogin_SavePassword)
+        if not ctltoggle_GetState(wndlogin_SavePassword) then
+            ctltoggle_SetState(wndlogin_AutoLogin,0)
+        end if
+    elsif equal(event,"menu") then
+        setCheck(wndlogin_mnuNewAcount,ctltoggle_GetState(wndlogin_NewAcount))
+        setCheck(wndlogin_mnuAutoLogin,ctltoggle_GetState(wndlogin_AutoLogin))
+        setCheck(wndlogin_mnuSavePassword,ctltoggle_GetState(wndlogin_SavePassword))
+        mousepos = getPointerPos()-4
+        mousepos = ScreenToClient(wndLogin,mousepos[1],mousepos[2])
+        popup(wndlogin_mnuMenu,mousepos[1],mousepos[2])
+    end if
+end procedure
+events_SetHandler(wndLogin,routine_id("wndLoginEvent"))
+
+procedure onClick_mnuConnect()
+    events_SendEvent(wndLogin,"connect")
+end procedure
+onClick[wndlogin_mnuConnect] = routine_id("onClick_mnuConnect")
+
+procedure onClick_mnuNewAcount()
+    events_SendEvent(wndLogin,"newacount")
+end procedure
+onClick[wndlogin_mnuNewAcount] = routine_id("onClick_mnuNewAcount")
+
+procedure onClick_mnuAutoLogin()
+    events_SendEvent(wndLogin,"autologin")
+end procedure
+onClick[wndlogin_mnuAutoLogin] = routine_id("onClick_mnuAutoLogin")
+
+procedure onClick_mnuSavePassword()
+    events_SendEvent(wndLogin,"savepassword")
+end procedure
+onClick[wndlogin_mnuSavePassword] = routine_id("onClick_mnuSavePassword")

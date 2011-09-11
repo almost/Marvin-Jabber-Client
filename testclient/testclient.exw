@@ -1,0 +1,222 @@
+--Test client
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+
+--Written to test euphoria Jabber library, probably won't work anymore due to changes in
+--the library but I'll leave it here in case it's usefull in the futur
+
+constant USERNAME="username"
+constant PASSWORD="password"
+
+with trace
+without warning
+include win32lib.ew
+include jabber.ew
+--include reg.ew
+
+--Define windows
+constant wndRoster     = create(Window, "EU Jabber Client", 0, Default, Default, 200, 500, 0 ),
+         tvRoster      = create(TreeView,"Treeview", wndRoster, 0, 0, 10,10, or_all({TVS_HASBUTTONS, TVS_SHOWSELALWAYS}))--or_all({TVS_HASLINES, TVS_LINESATROOT, TVS_HASBUTTONS, TVS_SHOWSELALWAYS})
+                        
+                        
+constant wndConnecting = create( Window, "Connecting...", 0, Default, Default, 200, 100, WS_DLGFRAME),
+         lblConnecting = create( CText, "Connecting...", wndConnecting, 0, 25, 200, 50, 0)
+
+
+constant wndMessage    = create( Window, "Message", 0,Default,Default,800,300,0)--,
+         --txtMessage    
+--------------------------
+
+--Load icons
+constant
+ICO_GROUP   = addIcon( extractIcon( "group.ico" )),
+ICO_ONLINE_USER  = addIcon( extractIcon( "online.ico"  )),
+ICO_OFFLINE_USER = addIcon( extractIcon( "offline.ico" ))
+--------------------------
+
+sequence RosterLookup -- {index,type,name} used to associate a JID or group name with each item in the treeview
+constant RL_CONTACT = 1,
+         RL_GROUP   = 2
+
+
+--Roster functions
+function LocateGroup(sequence name) --locate a group in the roster, if it can't be found then create it
+    for i = 1 to length(RosterLookup) do
+        if RosterLookup[i][2] = RL_GROUP and equal(RosterLookup[i][3],name) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+function EnsureGroupExists(sequence name) --locate a group in the roster, if it can't be found then create it
+    atom ret
+    ret = LocateGroup(name)
+    if ret = 0 then
+        ? {tvRoster, ICO_GROUP, ICO_GROUP, name, 0}
+        RosterLookup = append(RosterLookup,{addTVItem( tvRoster, ICO_GROUP, ICO_GROUP, name, 0 ),RL_GROUP,name})
+        return RosterLookup[length(RosterLookup)][1]
+    else
+        return RosterLookup[ret][1]
+    end if
+end function
+
+function LocateItem(sequence JID)
+    for i = 1 to length(RosterLookup) do
+        if RosterLookup[i][2] = RL_CONTACT and equal(RosterLookup[i][3],JID) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+procedure DeleteRosterItem(sequence JID)
+    atom loc
+    loc = LocateItem(JID)
+    if loc != 0 then
+        if deleteItem(tvRoster,RosterLookup[loc][1]) then end if
+        RosterLookup = RosterLookup[1..loc-1]&RosterLookup[loc+1..length(RosterLookup)]
+    end if
+end procedure
+
+procedure UpdateRosterItem(sequence JID)
+    atom loc
+    sequence name,group
+    object icon 
+    group = jabber_rosterGetGroups(JID)
+    if length(group) = 0 then
+        --now what do we do here? JabberIM just sticks items w/o a group in the "Friends" group. I think I'll put them into a "Contacts" group, more neutral
+        group = "Contacts"
+    else
+        --I'm alone useing the first listed group, for display anyway, maybe for sorting the others could be used
+        group = group[1]
+    end if
+    
+    name = jabber_rosterGetNick(JID)
+    if length(name) = 0 then name = JID end if
+    
+    loc = LocateItem(JID)
+    if loc != 0 and 
+       equal(RosterLookup[loc][1],name) and
+       equal(getTVText(getTVParent(RosterLookup[loc][1])),group) then
+        --nothing needs to be changed, it all looks fine
+        return
+    end if
+    DeleteRosterItem(JID)
+    
+    icon = jabber_rosterGetStatus(JID)
+    --now set the icon, in this test version it's a choice between off and online
+    if icon[1] = JABBER_SHOWSTATE_OFFLINE then
+        icon = ICO_OFFLINE_USER
+    else
+        icon = ICO_ONLINE_USER
+    end if
+    
+    --WORKAROUND: If the item was just removed from a group and the group is now empty then adding won't work
+    loc = LocateGroup(group)
+    if loc then
+        for i = 1 to length(RosterLookup) do
+            if RosterLookup[i][2] = RL_CONTACT and equal(getTVText(getTVParent(RosterLookup[i][1])),group) then
+                loc = 0
+            end if
+        end for
+        if loc then
+            if deleteItem(tvRoster,RosterLookup[loc][1]) then end if
+            RosterLookup = RosterLookup[1..loc-1]&RosterLookup[loc+1..length(RosterLookup)]
+        end if
+    end if
+    --:WORKAROUND
+    
+    --create the item   
+    RosterLookup = append(RosterLookup,{addTVItem( tvRoster, icon, icon, name, EnsureGroupExists(group) ),RL_CONTACT,JID})
+end procedure
+
+procedure RefreshRoster()
+    --Do a full refresh of the roster, when individual items are updated they are pushed and handled seperatly
+    sequence Roster
+    eraseItems(tvRoster)
+    RosterLookup = {}
+    
+    Roster = jabber_EnumRosterItems()
+    for i = 1 to length(Roster) do
+        UpdateRosterItem(Roster[i])
+    end for
+end procedure
+--------------------------
+
+--Jabber library Events
+procedure onStateChange(atom state,sequence text)
+    setText(lblConnecting,text)
+end procedure
+
+procedure onConnect()
+    closeWindow(wndConnecting)
+    RefreshRoster()
+end procedure
+
+procedure onRosterUpdate(sequence JID,atom UpdateType)
+    if UpdateType = JABBER_ROSTERUPDATE_UPDATE or UpdateType = JABBER_ROSTERUPDATE_ADD then
+        UpdateRosterItem(JID)
+    elsif UpdateType = JABBER_ROSTERUPDATE_STATUS or UpdateType = JABBER_ROSTERUPDATE_REMOVE then
+        DeleteRosterItem(JID)
+        if UpdateType = JABBER_ROSTERUPDATE_STATUS then
+            UpdateRosterItem(JID)
+        end if
+    end if
+    --TODO: handle subscription event
+end procedure
+
+procedure onMessage(atom Type, sequence From, sequence Subject, sequence Body, sequence Thread) 
+end procedure
+--------------------------
+
+procedure Connect(sequence server, sequence username, sequence password, sequence resource)
+    openWindow(wndConnecting,Modal)
+    jabber_onStateChange = routine_id("onStateChange")
+    if not jabber_Connect(server, username, password, resource) then
+        puts(1,"Connect failed\n")
+        abort(1)
+    end if
+end procedure
+
+--Win32Lib Events
+--wndRoster
+procedure onOpen_wndRoster()
+    --Initialize the jabber library, mainly calls winsock init stuff
+    if not jabber_Init(wndRoster) then
+        puts(1,"Jabber library initialization failed\n")
+        abort(1)
+    end if
+    --just for testing, we should realy display a connect dialog...
+    Connect("jabber.org",USERNAME,PASSWORD,"testclient")
+end procedure
+
+procedure onResize_wndRoster(atom style, atom x, atom y)
+    sequence ClientRect
+    if style != SIZE_MINIMIZED then
+        ClientRect = getClientRect(wndRoster)
+        setSize(tvRoster,ClientRect[3]-ClientRect[1],ClientRect[4]-ClientRect[2])
+    end if
+end procedure
+
+--Misc
+function AppCleanUp(integer ErrCode, sequence ErrText, integer ControlId, integer LastCleanUp)
+  --Clean up the jabber library, it needs to free winsock stuff
+  if jabber_CleanUp() then end if
+  return 0 -- Continue with other clean up routines.
+end function
+--------------------------
+
+--Set up jabber library events
+jabber_onConnect      = routine_id("onConnect"     )
+jabber_onRosterUpdate = routine_id("onRosterUpdate")
+jabber_onMessage      = routine_id("onMessage"     )
+--Set up win32lib events
+--wndRoster:
+onEvent [wndRoster] = routine_id("jabber_ProccessEvent")
+onOpen  [wndRoster] = routine_id("onOpen_wndRoster"    )
+onResize[wndRoster] = routine_id("onResize_wndRoster"  )  
+--Link in clean-up routine
+if attachCleanUp( routine_id("AppCleanUp" )) then end if
+--Lets go!
+WinMain(wndRoster,Normal)

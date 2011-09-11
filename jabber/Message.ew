@@ -1,0 +1,251 @@
+-- Handles message objects and converting them between xml and the internal format
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include eebax.e
+include xmltree.e
+include jabber.ew
+
+--
+global constant MESSAGE_ID      = 1,
+                MESSAGE_MID     = 2, -- The id attribute of the message
+                MESSAGE_TYPE    = 3,
+                MESSAGE_FROM    = 4,
+                MESSAGE_TO      = 5,
+                MESSAGE_SUBJECT = 6,
+                MESSAGE_BODY    = 7,
+                MESSAGE_THREAD  = 8,
+                MESSAGE_HTML    = 9,
+                MESSAGE_ERRCODE = 10, --0 if not error
+                MESSAGE_ERRMSG  = 11,
+                MESSAGE_X       = 12
+constant MESSAGE_BLANK = {0,"","normal","","","","","",0,0,"",{}} --other files should use message_GetBlank()
+
+atom NextID
+NextID = 1
+
+constant OutEEBAX = eebax_NewInstance()
+
+
+global function message_GetBlank()
+    sequence ret
+    ret = MESSAGE_BLANK
+    ret[MESSAGE_ID] = NextID
+    NextID += 1
+    return ret
+end function
+
+-------------------
+-- message_Parse --
+-------------------
+
+--Packet is a xmltree node
+global function message_Parse(object PacketOrXML)
+    sequence Atts,Children
+    sequence Message
+    atom Packet
+    
+    if sequence(PacketOrXML) then
+        Packet = xmltree_Parse(PacketOrXML)
+    else
+        Packet = PacketOrXML
+    end if
+   
+    Message = message_GetBlank()
+    
+    Atts = xmltree_GetAttributes(Packet)
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_LOCALNAME],"from") then
+            Message[MESSAGE_FROM] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"to") then
+            Message[MESSAGE_TO] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"type") then
+            Message[MESSAGE_TYPE] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"id") then
+            Message[MESSAGE_MID] = Atts[i][EEBAX_ATTS_VALUE]
+        end if
+    end for
+    
+    Children = xmltree_GetChildren(Packet)
+    for i = 1 to length(Children) do
+        if atom(Children[i]) then
+            if equal(xmltree_GetLocalName(Children[i]),"subject") then
+                Message[MESSAGE_SUBJECT] = xmltree_GetChildren(Children[i])
+                if length(Message[MESSAGE_SUBJECT]) > 0 and sequence(Message[MESSAGE_SUBJECT][1]) then
+                    Message[MESSAGE_SUBJECT] = Message[MESSAGE_SUBJECT][1]
+                else
+                    Message[MESSAGE_SUBJECT] = ""
+                end if
+            elsif equal(xmltree_GetLocalName(Children[i]),"body") then
+                Message[MESSAGE_BODY] = xmltree_GetChildren(Children[i])
+                if length(Message[MESSAGE_BODY]) > 0 and sequence(Message[MESSAGE_BODY][1]) then
+                    Message[MESSAGE_BODY] = Message[MESSAGE_BODY][1]
+                else
+                    Message[MESSAGE_BODY] = ""
+                end if
+            elsif equal(xmltree_GetLocalName(Children[i]),"thread") then
+                Message[MESSAGE_THREAD] = xmltree_GetChildren(Children[i])
+                if length(Message[MESSAGE_THREAD]) > 0 and sequence(Message[MESSAGE_THREAD][1]) then
+                    Message[MESSAGE_THREAD] = Message[MESSAGE_THREAD][1]
+                else
+                    Message[MESSAGE_THREAD] = ""
+                end if
+            elsif equal(xmltree_GetLocalName(Children[i]),"error") then
+                Message[MESSAGE_ERRMSG] = xmltree_GetChildren(Children[i])
+                if length(Message[MESSAGE_ERRMSG]) > 0 and sequence(Message[MESSAGE_ERRMSG][1]) then
+                    Message[MESSAGE_ERRMSG] = Message[MESSAGE_ERRMSG][1]
+                else
+                    Message[MESSAGE_ERRMSG] = ""
+                end if
+                Atts = xmltree_GetAttributes(Children[i])
+                for n = 1 to length(Atts) do
+                    if equal(Atts[n][EEBAX_ATTS_LOCALNAME],"code") then
+                        Message[MESSAGE_ERRCODE] = value(Atts[n][EEBAX_ATTS_VALUE])
+                        Message[MESSAGE_ERRCODE] = Message[MESSAGE_ERRCODE][2]
+                    end if
+                end for
+            elsif equal(xmltree_GetLocalName(Children[i]),"html") then
+                Message[MESSAGE_HTML] = xmltree_CopyNode(Children[i])
+            else
+                Message[MESSAGE_X] = append(Message[MESSAGE_X],xmltree_CopyNode(Children[i]))
+            end if
+        end if
+    end for
+    
+    if sequence(PacketOrXML) then
+        xmltree_DeleteNode(Packet)
+    end if
+    
+    return Message
+end function
+
+--------------------
+-- message_GetXML --
+--------------------
+
+
+sequence xmlbuffer
+procedure onXML_OutEEBAX(integer hinst, sequence XML)
+    xmlbuffer &= XML
+end procedure
+eebax_SetXMLEvent(OutEEBAX,routine_id("onXML_OutEEBAX"))
+
+procedure onParseError_OutEEBAX(integer hInst, integer ErrorNumber, sequence Description, integer LineNumber)
+    puts(1,"EEBAX PARSE ERROR WHILE GETTING XML FOR MESSAGE IN MESSAGE.EW\n"&Description&"\n")
+    eebax_ResetInstance(hInst)
+end procedure
+eebax_SetParseErrorEvent(OutEEBAX,routine_id("onParseError_OutEEBAX"))
+
+global function message_GetXML(sequence Message)
+    sequence Attributes
+    xmlbuffer = ""
+    
+    eebax_ResetInstance(OutEEBAX)
+    eebax_StartDocument(OutEEBAX)
+    
+    Attributes = {}
+    
+    -- Get attributes for message element
+    if length(Message[MESSAGE_TYPE]) != 0 then
+        Attributes = {{"type",Message[MESSAGE_TYPE]}}
+    end if
+    if length(Message[MESSAGE_FROM]) != 0 then
+        Attributes = append(Attributes,{"from",Message[MESSAGE_FROM]})
+    end if
+    if length(Message[MESSAGE_TO]) != 0 then
+        Attributes = append(Attributes,{"to",Message[MESSAGE_TO]})
+    end if
+    if length(Message[MESSAGE_MID]) != 0 then
+        Attributes = append(Attributes,{"id",Message[MESSAGE_MID]})
+    end if
+    -- Message element
+    eebax_StartElement(OutEEBAX,"message",Attributes,0)
+    
+    -- Subject element
+    if length(Message[MESSAGE_SUBJECT]) != 0 then
+        eebax_StartElement(OutEEBAX,"subject",{},0)
+        eebax_Characters(OutEEBAX,Message[MESSAGE_SUBJECT])
+        eebax_EndElement(OutEEBAX,"subject")
+    end if
+    
+    -- Thread element
+    if length(Message[MESSAGE_THREAD]) != 0 then
+        eebax_StartElement(OutEEBAX,"thread",{},0)
+        eebax_Characters(OutEEBAX,Message[MESSAGE_THREAD])
+        eebax_EndElement(OutEEBAX,"thread")
+    end if
+    
+    -- Error element
+    if Message[MESSAGE_ERRCODE] != 0 then
+        eebax_StartElement(OutEEBAX,"error",{{"code",sprint(Message[MESSAGE_ERRCODE])}},0)
+        eebax_Characters(OutEEBAX,Message[MESSAGE_ERRMSG])
+        eebax_EndElement(OutEEBAX,"error")
+    end if
+    
+    -- Body element
+    if length(Message[MESSAGE_BODY]) > 0 then
+        eebax_StartElement(OutEEBAX,"body",{},0)
+        eebax_Characters(OutEEBAX,Message[MESSAGE_BODY])
+        eebax_EndElement(OutEEBAX,"body")
+    end if
+    
+    -- Html element
+    if Message[MESSAGE_HTML] != 0 then
+        xmltree_SendToEEBAX(Message[MESSAGE_HTML],OutEEBAX)
+    end if
+    
+    -- X elements
+    for i = 1 to length(Message[MESSAGE_X]) do
+        xmltree_SendToEEBAX(Message[MESSAGE_X][i],OutEEBAX)
+    end for
+    
+    eebax_EndElement(OutEEBAX,"message")
+    
+    eebax_EndDocument(OutEEBAX)
+    
+    return xmlbuffer
+end function
+
+global function message_Equal(sequence Message1, sequence Message2)
+    --return 1 if they seem to be the same message
+    return Message1[MESSAGE_ID]=Message2[MESSAGE_ID]
+end function
+
+global function message_Find(sequence fnd, sequence in)
+    for i = 1 to length(in) do
+        if equal(fnd[MESSAGE_ID],in[i][MESSAGE_ID]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+global procedure message_Delete(sequence Message)
+    if Message[MESSAGE_HTML] != 0 then
+        xmltree_DeleteNode(Message[MESSAGE_HTML])
+    end if
+    for i = 1 to length(Message[MESSAGE_X]) do
+        xmltree_DeleteNode(Message[MESSAGE_X][i])
+    end for
+end procedure

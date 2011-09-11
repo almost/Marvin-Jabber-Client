@@ -1,0 +1,257 @@
+-- wndSettings window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--This window is not skinable
+
+include settings.ew
+
+--{storage{section,name},{cat,[subcat]},Name,Type,Extra}
+--Storage section and name is the identifcation used for this setting in settings.ew
+--Cat and subcat are used in the left side of the settings window, subcat is optional
+--Name is the name used on the right side of the settings window in the property list
+--Type is a property type
+--Extra is any extra data needed depending on Type
+constant sSTORAGE = 1,
+         sCAT     = 2,
+         sNAME    = 3,
+         sTYPE    = 4,
+         sEXTRA   = 5
+
+constant SETTINGS = {
+        {{"MessageWin","ShowInMessagePane"  },{"Message Window"}  ,"Show new messages in composing area"  ,propTypeYesNo,{}},
+        {{"MessageWin","DisplayInNewWindow" },{"Message Window"}  ,"Show incoming messages in new windows",propTypeYesNo,{}},
+        {{"MessageWin","SendHTML"           },{"Message Window"}  ,"Send XHTML formatted messages"        ,propTypeYesNo,{}},
+        {{"MessageWin","CloseAfterSend"     },{"Message Window"}  ,"Close window after sending message"   ,propTypeYesNo,{}},
+        {{"MessageWin","EnterSends"         },{"Message Window"}  ,"Enter key sends message"              ,propTypeYesNo,{}},
+        {{"MessageWin","PopupNewMessages"   },{"Message Window"}  ,"Pop up new messages"                  ,propTypeYesNo,{}},
+        {{"MessageWin","ShowPresenceInChat" },{"Message Window"}  ,"Show status changes in chat"          ,propTypeYesNo,{}},
+        {{"MessageWin","AutoShowHistory"    },{"Message Window","Message History"} ,"Always show history"                  ,propTypeYesNo,{}},        
+        {{"MessageWin","EnableComposingEvent"},{"Message Window"} ,"Enable sending of reply notification (composing event)",propTypeYesNo,{}},        
+        {{"History"   ,"DayHeaders"         },{"Message Window","Message History"} ,"Show a seperator for each day"        ,propTypeYesNo,{}},
+        {{"History"   ,"DateStamps"         },{"Message Window","Message History"} ,"Show date stamps"          ,propTypeYesNo,{}},
+        {{"Security"  ,"LogMessages"        },{"Message Window","Message History"} ,"Log Messages"                         ,propTypeYesNo,{}},
+        {{"Colors","OwnNick"         },{"Message Window","Font"}  ,"Color of own nick in chat"            ,propTypeColor,{}},
+        {{"Colors","OthersNick"      },{"Message Window","Font"}  ,"Color of others' nicks in chat"       ,propTypeColor,{}},
+        {{"Colors","Emotes"          },{"Message Window","Font"}  ,"Color of emotes in chat"              ,propTypeColor,{}},
+        {{"Colors","StatusChanges"   },{"Message Window","Font"}  ,"Color of status changes in chat"      ,propTypeColor,{}},
+        {{"MessageWin","DefaultFont"   },{"Message Window","Font"},"Default message font"                 ,propTypeFont ,{}},
+        {{"MessageWin","DefaultFontSize"},{"Message Window","Font"},"Default message font size"           ,propTypeList ,{"8","10","12","14","16","24","32","48"}},
+        {{"Status"    ,"DefaultAvailable"   },{"Status","Default Messages"} ,"Available"                  ,propTypeText, {}},
+        {{"Status"    ,"DefaultChat"        },{"Status","Default Messages"} ,"Free for Chat"              ,propTypeText, {}},
+        {{"Status"    ,"DefaultAway"        },{"Status","Default Messages"} ,"Away"                       ,propTypeText, {}},
+        {{"Status"    ,"DefaultXA"          },{"Status","Default Messages"} ,"Extended Away"              ,propTypeText, {}},
+        {{"Status"    ,"DefaultDND"         },{"Status","Default Messages"} ,"Do Not Disturb"             ,propTypeText, {}},
+        {{"Status"    ,"EnableAutoAway"     },{"Status","Auto"}   ,"Enable Auto Away"                     ,propTypeYesNo, {}},
+        {{"Status"    ,"AutoAway"           },{"Status","Auto"}   ,"Minutes of inactivity before setting status to Away",propTypeNumeric, {}},
+        {{"Status"    ,"AutoXA"             },{"Status","Auto"}   ,"Minutes of inactivity before setting status to Extended Away",propTypeNumeric, {}},
+        {{"Status"    ,"AutoAwayMessage"    },{"Status","Auto"}   ,"Auto Away message"                    ,propTypeText, {}},
+        {{"Status"    ,"AutoXAMessage"      },{"Status","Auto"}   ,"Auto Extended Away message"           ,propTypeText, {}},
+        {{"Login"     ,"Priority"           },{"Status"}          ,"Resource Priority"                    ,propTypeNumeric,{}},
+        {{"SysTray"   ,"FlashNewMessageIcon"},{"System Tray Icon"},"Flash new message system tray icon"   ,propTypeYesNo,{}},
+        {{"Sounds"    ,"Message"            },{"Sounds"}          ,"Message Arrival"                      ,propTypeFile, {"WAV File","*.wav"}},
+        {{"Sounds"    ,"ContactOnline"      },{"Sounds"}          ,"Contact Online"                       ,propTypeFile, {"WAV File","*.wav"}},
+        {{"Sounds"    ,"ContactOffline"     },{"Sounds"}          ,"Contact Offline"                      ,propTypeFile, {"WAV File","*.wav"}},
+        {{"Sounds"    ,"Enable"             },{"Sounds"}          ,"Enable sounds"                        ,propTypeYesNo, {}},
+        {{"Roster"    ,"TransAlpha"         },{"Roster"}          ,"Windows 2000 transparency (Windows 2K/XP only)",propTypePercentage, {255,10}},
+        {{"Roster"    ,"ShowInTaskbar"      },{"Roster"}          ,"Show on taskbar"                      ,propTypeYesNo, {}},
+        {{"Roster"    ,"ShowEmptyGroups"    },{"Roster"}          ,"Show empty groups in roster"          ,propTypeYesNo, {}},
+        {{"Roster"    ,"PendingCat"         },{"Roster"}          ,"Show pending roster items in a different category",propTypeYesNo, {}},
+        {{"Roster"    ,"OpenGroupItemCount" },{"Roster"}          ,"Show item count for expanded groups"  ,propTypeYesNo, {}},
+        {{"Roster"    ,"ClosedGroupItemCount" },{"Roster"}        ,"Show item count for collapsed groups" ,propTypeYesNo, {}},
+        {{"Roster"    ,"FlashNewMessageIcon" },{"Roster"}         ,"Flash new message icon in roster"     ,propTypeYesNo,  {}},
+        {{"Roster"    ,"ItemFont" },          {"Roster","Font"}   ,"Item font"                            ,propTypeFont,  {}},
+        {{"Roster"    ,"ItemFontSize" },      {"Roster","Font"}   ,"Item font size"                       ,propTypeList ,{"8","10","11","12","14","16","24","32"}},
+        {{"Roster"    ,"ItemColor" },         {"Roster","Font"}   ,"Item text color"                      ,propTypeColor,  {}},
+        {{"Roster"    ,"BackgroundColor" },   {"Roster","Font"}   ,"Background color"                     ,propTypeColor,  {}},
+        {{"Notification","MessageEnable" },{"System Tray Icon","Notification Box"},"Enable for messages"  ,propTypeYesNo,  {}},
+        {{"Notification","PresenceEnable"},{"System Tray Icon","Notification Box"},"Enable for presence changes",propTypeYesNo,  {}},
+        {{"Notification","BackColor"},     {"System Tray Icon","Notification Box"},"Background color"     ,propTypeColor,  {}},
+        {{"Notification","Font"},          {"System Tray Icon","Notification Box"},"Font"                 ,propTypeFont,  {}},
+        {{"Notification","FontSize"},{"System Tray Icon","Notification Box"},"Font Size"                  ,propTypeList ,{"8","10","12","14","16","24","32","48"}},
+        {{"Notification","Timeout"},{"System Tray Icon","Notification Box"},"Auto hide (seconds)"                ,propTypeNumeric,  {}}
+        }  
+        
+sequence Settings
+Settings = SETTINGS
+for i = 1 to length(EVENTS_HOTKEYS) do
+    Settings = append(Settings,{{"hotkeys",EVENTS_HOTKEYS[i][EVENTS_ID]},{"Hot Keys"} & EVENTS_HOTKEYS[i][EVENTS_SECTION],EVENTS_HOTKEYS[i][EVENTS_CAPTION],propTypeHotKey,{}})
+end for
+
+sequence Values --Parralel sequence to Settings, containing the current value of each setting        
+Values = repeat(0,length(Settings))
+        
+sequence CurrentCat
+CurrentCat = {""}
+        
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+--Read values from prop control into values sequence
+procedure ReadValues()
+    object val
+    if length(CurrentCat[1]) != 0 then  
+        for i = 1 to length(Settings) do
+            if equal(CurrentCat,Settings[i][sCAT]) then
+                val = getPropValue(wndsettings_Settings,Settings[i][sNAME])
+                if atom(Values[i]) then
+                    val = value(val)
+                    val = val[2]
+                end if
+                Values[i] = val
+            end if
+        end for
+    end if
+end procedure
+
+procedure ShowSettings()
+    eraseProperties(wndsettings_Settings) 
+    --Get the sellected category
+    CurrentCat = {getTVSelectedText(wndsettings_Categories)}
+    --If there is a subcat then get that as well
+    if getTVIndex(wndsettings_Categories) != 0 and getTVParent(getTVIndex(wndsettings_Categories)) != 0 then
+        CurrentCat = prepend(CurrentCat,getTVText(getTVParent(getTVIndex(wndsettings_Categories))))
+    end if
+    
+    if length(CurrentCat[1]) != 0 then    
+        for i = 1 to length(Settings) do
+            if equal(CurrentCat,Settings[i][sCAT]) then
+                addProperty(wndsettings_Settings,Settings[i][sNAME],Values[i],1,Settings[i][sEXTRA],Settings[i][sTYPE])
+            end if
+        end for
+    end if
+end procedure
+        
+procedure ShowCategories()
+    sequence cats
+    atom parent,catloc,subcatloc,routine
+    
+    --Make a list of cats, each element in sequence is:
+    --{name,subcats} where subcats is a sequence of names
+    cats = {}
+    for i = 1 to length(Settings) do
+        catloc = sub_find(Settings[i][sCAT][1],cats,1)
+        if catloc = 0 then
+            cats = sort(append(cats,{Settings[i][sCAT][1],{}}))
+            catloc = length(cats)
+        end if
+        if length(Settings[i][sCAT]) > 1 then
+            subcatloc = find(Settings[i][sCAT][2],cats[catloc][2])
+            if subcatloc = 0 then
+                cats[catloc][2] = sort(append(cats[catloc][2],Settings[i][sCAT][2]))
+            end if
+        end if
+    end for
+    
+    routine = onChange[wndsettings_Categories]
+    onChange[wndsettings_Categories] = -1
+    
+    --First erase any existing cats from the treeview
+    eraseItems(wndsettings_Categories)
+    
+    --Add all the cats to the treeview
+    for i = 1 to length(cats) do
+        --Add category
+        parent = addTVItem(wndsettings_Categories,0,0,cats[i][1],0)
+        --Add sub categories
+        for n = 1 to length(cats[i][2]) do
+            if addTVItem(wndsettings_Categories,0,0,cats[i][2][n],parent) then end if
+        end for
+        --Ensure the item is expanded
+        -- expandItem was changed in 0.57
+        if Win32LibVersion[2] > 56 then
+            call_proc(routine_id("expandItem"),{parent})
+        else
+            call_proc(routine_id("expandItem"),{wndsettings_Categories,parent})
+        end if    
+    end for
+
+    ShowSettings()
+    onChange[wndsettings_Categories] = routine
+end procedure
+
+procedure Apply()
+    ReadValues()
+    for i = 1 to length(Settings) do
+        settings_Save(Settings[i][sSTORAGE][1],Settings[i][sSTORAGE][2],Values[i])
+    end for
+    setEnable(wndsettings_Apply,False)
+end procedure
+
+procedure Init()
+    --Load values for all settings
+    for i = 1 to length(Settings) do
+        Values[i] = settings_Get(Settings[i][sSTORAGE][1],Settings[i][sSTORAGE][2])
+    end for
+    
+    ShowCategories()
+    
+    setEnable(wndsettings_Apply,False)    
+end procedure
+wndsettings_private_RidInit = routine_id("Init")
+
+procedure onresize(atom style, atom x, atom y)
+    --resize all the controls
+    setRect(wndsettings_Categories,10,10,150,y-55,0)
+    setRect(wndsettings_OK,x-255,y-35,75,25,0)
+    setRect(wndsettings_Cancel,x-170,y-35,75,25,0)
+    setRect(wndsettings_Apply,x-85,y-35,75,25,0)
+    reSizeProperties(wndsettings_Settings,x-193+14,y-55)
+end procedure
+
+procedure onpropchange(sequence name,sequence val)
+    setEnable(wndsettings_Apply,True)
+end procedure
+
+procedure onClick_OK()
+    Apply()
+    wndsettings_Close()
+end procedure
+
+procedure onChange_Categories()
+    ReadValues()
+    ShowSettings()
+end procedure
+
+procedure Event(atom id, sequence event)
+    if equal(event,"settings") then
+        wndsettings_Open()
+    end if
+end procedure
+events_SetHandler(0,routine_id("Event"))
+
+onChange[wndsettings_Categories] = routine_id("onChange_Categories")
+onClick[wndsettings_OK] = routine_id("onClick_OK")
+onClick[wndsettings_Apply] = routine_id("Apply")
+onClick[wndsettings_Cancel] = routine_id("wndsettings_Close")
+onResize[wndSettings] = routine_id("onresize")
+
+onPropChange[wndsettings_Settings] = routine_id("onpropchange")

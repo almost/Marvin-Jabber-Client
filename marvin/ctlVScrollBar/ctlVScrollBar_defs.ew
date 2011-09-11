@@ -1,0 +1,341 @@
+--ctlVScrollBar control definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+--Resources uses:
+--Scrollbar/Up
+--Scrollbar/Down
+--Scrollbar/Background
+--Scrollbar/Thumb
+
+--BEGIN INSTANCE UNIQUE VARS---------------
+
+sequence Range       --{min,max} where min is the value when it is scrolled all the way up and max is when it's all the way down
+Range = {}
+sequence Change      --{small,large}
+Change = {}
+sequence Position    --Will be stored with as much acuracy as possible but should be rounded b4 being returned (min<=Postion<=max)
+Position = {}
+
+sequence ScrollEvent --Routine ID to be called when scroll changes: ScrollEvent(atom id(index))
+ScrollEvent = {}
+
+sequence Buffer
+Buffer = {}
+sequence WinID
+WinID = {}
+sequence Area
+Area = {}
+
+--END INSTANCE UNIQUE VARS---------------
+
+
+object MouseDown --{buffer,vpos or -1 if it was on the thumb (which moves, making vpos useless),time( that last action was taken)} or 0
+MouseDown = 0
+
+--Image data
+atom     pixUp
+sequence UpSize
+atom     pixDown
+sequence DownSize
+atom     pixBackground
+sequence BackgroundSize
+atom     pixThumb
+sequence ThumbSize
+
+procedure UpdateImageData()
+    pixUp          = skinx_GetResource("Scrollbar/Up")
+    UpSize         = getCtlSize(pixUp)
+    pixDown        = skinx_GetResource("Scrollbar/Down")
+    DownSize       = getCtlSize(pixDown)
+    pixBackground  = skinx_GetResource("Scrollbar/Background")
+    BackgroundSize = getCtlSize(pixBackground)
+    pixThumb       = skinx_GetResource("Scrollbar/Thumb")
+    ThumbSize      = getCtlSize(pixThumb)
+end procedure
+------------
+
+function GetRelMousePos(integer index)
+    sequence pos
+    pos = skinx_GetAreaRect(WinID[index],Area[index])
+    pos = pos[1..2]
+    return getMousePos()-(pos+getClientPoint(WinID[index],-1,-1))
+end function
+
+procedure PaintBackground(integer index, atom min, atom max)
+    sequence BufferSize
+    BufferSize = getCtlSize(Buffer[index])
+    
+    UpdateImageData()
+    if min = -1 then
+        min = 0
+        max = BufferSize[2]
+    end if
+    if min < UpSize[2] then
+        --redraw the up button
+        copyBlt(Buffer[index],0,0,pixUp)
+        min = UpSize[2]
+    end if
+
+    if max > BufferSize[2]-DownSize[2] then
+        --redraw the down button
+        copyBlt(Buffer[index],0,BufferSize[2]-DownSize[2],pixDown)
+        max = BufferSize[2]-DownSize[2]
+    end if
+    
+    if min < BufferSize[2]-DownSize[2] and max > UpSize[2] then
+        --need to round down the min to a border of the background image
+        min = (floor((min-UpSize[2])/BackgroundSize[2]) * BackgroundSize[2])+UpSize[2]
+
+        windraw_TileImage(Buffer[index],         --dest
+                          pixBackground,         --src
+                          0,min,                 --x1,y1
+                          BufferSize[1],max,     --x2,y2
+                          0)                     --transparent
+    end if
+end procedure
+
+function GetThumbPixelPosition(integer index, atom pos) --pos=-1 meens use current
+    sequence BufferSize
+    atom pixelpos
+    UpdateImageData()
+    if atom(Range[index]) then  
+        return UpSize[2]
+    end if
+    if pos = -1 then pos = Position[index] end if
+    BufferSize = getCtlSize(Buffer[index])
+    pixelpos = floor(((pos-Range[index][1])/(Range[index][2]-Range[index][1]))*(BufferSize[2]-UpSize[2]-DownSize[2]-ThumbSize[2])+UpSize[2])
+    if pixelpos < UpSize[2] then
+        pixelpos = UpSize[2]
+    end if
+    return pixelpos
+end function
+
+--The thumb position from a pixel position (assumed to be the center of the thumb)
+function GetThumbPosition(integer index, atom pixelpos)
+    sequence BufferSize
+    atom upperlimit
+    if atom(Range[index]) then  
+        return 0
+    end if
+    BufferSize = getCtlSize(Buffer[index])
+    UpdateImageData()
+    pixelpos = (pixelpos - UpSize[2] - ThumbSize[2]/2)
+    upperlimit = BufferSize[2]-UpSize[2]-DownSize[2]-ThumbSize[2]
+    if pixelpos < 0 then
+        pixelpos = 0
+    elsif pixelpos > upperlimit then
+        pixelpos = upperlimit
+    end if
+    if upperlimit > 0 then
+        return (pixelpos/upperlimit)*(Range[index][2]-Range[index][1])+Range[index][1]
+    else
+        return Position[index] --can't do a pixel conversion, lets keep it the same
+    end if
+end function
+
+procedure PaintThumb(integer index)
+    atom PixelPosition
+    sequence BufferSize
+    BufferSize = getCtlSize(Buffer[index])
+    
+    UpdateImageData()
+    
+    --We need to convert the position stored (between range[1] and range[2]) to an actual pixel position
+    PixelPosition = GetThumbPixelPosition(index,-1)
+    
+    --Now paint the thumb (transparently, we might want to see a bit of the background through it...)
+    windraw_transBlt(Buffer[index],0,PixelPosition,pixThumb)
+    
+    -- Check if bottom sizer needs repainting
+    if PixelPosition + ThumbSize[2] > BufferSize[2] - DownSize[2] then
+        PaintBackground(index,BufferSize[2] - DownSize[2],BufferSize[2])
+    end if
+end procedure
+
+procedure MoveThumb(integer index, atom pos)
+    atom PixelPosition
+    
+    if atom(Range[index]) then
+        return
+    end if
+    
+    UpdateImageData()
+    
+    if pos < Range[index][1] then pos = Range[index][1] end if
+    if pos > Range[index][2] then pos = Range[index][2] end if  
+    
+    --Erase the thumb from it's current location
+    PixelPosition = GetThumbPixelPosition(index,-1)
+    if floor(Position[index]) != floor(pos) then
+        Position[index] = pos
+        if ScrollEvent[index] != -1 then
+            call_proc(ScrollEvent[index],{index})
+        end if
+    end if
+    Position[index] = pos
+    if PixelPosition != GetThumbPixelPosition(index,-1) then
+        PaintBackground(index,PixelPosition,PixelPosition+ThumbSize[2])
+
+        --Draw the thumb in it's new position
+        PaintThumb(index)
+        skinx_RefreshArea(WinID[index],Area[index])
+    end if
+end procedure
+
+global procedure ctlvscrollbar_SetPosition(integer index,integer pos)
+    MoveThumb(index,pos)
+end procedure
+
+global function ctlvscrollbar_GetPosition(integer index)
+    if atom(Range[index]) then
+        return Range[index]
+    else
+        return floor(Position[index])
+    end if
+end function
+
+procedure Refresh(integer index)
+    PaintBackground(index,-1,-1)
+    PaintThumb(index)
+end procedure 
+
+global procedure ctlvscrollbar_Refresh(integer index)
+    Refresh(index)
+    skinx_RefreshArea(WinID[index],Area[index])
+end procedure
+
+procedure MouseHeldDown()
+    integer index
+    sequence BufferSize
+    sequence mouse
+    atom temp
+    index = RevFind(MouseDown[1],Buffer)   
+    BufferSize = getCtlSize(Buffer[index])
+    UpdateImageData()
+    mouse = GetRelMousePos(index)
+    if MouseDown[2] = -1 then
+        --Mouse was clicked down while on the thumb
+        MoveThumb(index,GetThumbPosition(index,mouse[2]))
+    elsif mouse[1] > 0 and mouse[1] < BufferSize[1] and
+          mouse[2] > 0 and mouse[2] < BufferSize[2] then
+        --Mouse is within the scrollbars area
+        if MouseDown[3] <= time() or MouseDown[3] = 0 then
+            if MouseDown[2] < UpSize[2] then
+                if mouse[2] < UpSize[2] then
+                    --On the up mover
+                    MoveThumb(index,Position[index]-Change[index][1])
+                end if
+            elsif MouseDown[2] > BufferSize[2] - DownSize[2] then
+                if mouse[2] > BufferSize[2] - DownSize[2] then
+                    --On the down mover
+                    MoveThumb(index,Position[index]+Change[index][1])
+                end if
+            elsif mouse[2] < GetThumbPixelPosition(index,-1) then
+                --Mouse is above the thumb
+                temp = Position[index]-Change[index][2]
+                if GetThumbPixelPosition(index,temp)+ ThumbSize[2]/2 < mouse[2] then
+                    temp = GetThumbPosition(index,mouse[2])
+                end if
+                MoveThumb(index,temp)
+            elsif mouse[2] > GetThumbPixelPosition(index,-1) + ThumbSize[2] then
+                --Mouse is below the thumb
+                temp = Position[index]+Change[index][2]
+                if GetThumbPixelPosition(index,temp)+ ThumbSize[2]/2 > mouse[2] then
+                    temp = GetThumbPosition(index,mouse[2])
+                end if
+                MoveThumb(index,temp)
+            end if
+            if MouseDown[3] = 0 then
+                MouseDown[3] = time() + 0.5
+            else
+                MouseDown[3] = time() + 0.05
+            end if
+        end if
+    end if
+end procedure
+
+procedure onresize(integer buffer, atom x, atom y) --new size of the area
+    Refresh(RevFind(buffer,Buffer))
+end procedure
+
+procedure onmouse(integer buffer, atom event, atom x, atom y, atom shift) --coords relative to the area
+    integer index
+    index = RevFind(buffer,Buffer)
+    UpdateImageData()
+    
+    if event = LeftDown then
+        MouseDown = {0,0,0}
+        MouseDown[1] = buffer
+        
+        if y > GetThumbPixelPosition(index,-1) and y < GetThumbPixelPosition(index,-1) + ThumbSize[2] then
+            MouseDown[2] = -1 --on the thumb
+        else
+            MouseDown[2] = y
+        end if
+        
+        skinx_CaptureMouse(WinID[index],Area[index])
+        MouseHeldDown()
+    elsif event = LeftUp then   
+        MouseDown = 0
+        skinx_ReleaseMouse()
+    end if
+end procedure
+
+procedure MouseTimer()
+    if sequence(MouseDown) then
+        MouseHeldDown()
+    end if
+end procedure
+GetTimerEvent(routine_id("MouseTimer"),50)
+
+global procedure ctlvscrollbar_SetRange(integer index,object range)
+    sequence BufferSize
+    BufferSize = getCtlSize(Buffer[index])
+    if atom(range) then
+    elsif range[1] = range[2] then
+        range = range[1]
+    end if
+    PaintBackground(index,0,BufferSize[2])
+    Range[index] = range
+    PaintThumb(index)
+    MoveThumb(index,Position[index])
+end procedure
+    
+global procedure ctlvscrollbar_SetChange(integer index,sequence change) --{small,big}
+    Change[index] = change
+end procedure
+
+global function ctlvscrollbar_Create(integer winid, sequence area, atom scrollevent)
+    Position    = append( Position    , 1           )
+
+    Range       = append( Range       , 1           )--{1,100}     )
+    Change      = append( Change      , {1,10}      )
+    ScrollEvent = append( ScrollEvent , scrollevent )
+    
+    WinID       = append( WinID       , winid       )
+    Area        = append( Area        , area        )
+    Buffer      = append( Buffer      , skinx_TakeoverArea(winid,area,routine_id("onmouse"),routine_id("onresize"),1))
+    return length(Buffer)
+end function

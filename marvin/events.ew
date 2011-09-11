@@ -1,0 +1,117 @@
+-- Handles skinx messages and hot keys
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include VK.ew
+
+constant USER32 = open_dll("user32.dll")
+constant dllGetForegroundWindow = define_c_func(USER32,"GetForegroundWindow",{},C_ULONG)
+
+sequence Handlers --{winid,{routineids}} --routines should accept {winid,event}
+Handlers = {}
+
+global constant EVENTS_HOTKEYS = {
+{{},"Show settings window","Settings","Settings",""},
+{{},"Show gateway settings window","Gateways","Gateways",""},
+{{},"Change skin","ChangeSkin","ChangeSkin",""},
+{{"Status"},"Set status to Available","SetAvailable","SetAvailable",""},
+{{"Status"},"Set status to Free For Chat","SetChat","SetChat",""},
+{{"Status"},"Set status to Away","SetAway","SetAway",""},
+{{"Status"},"Set status to Extended Away","SetXA","SetXA",""},
+{{"Status"},"Set status to Do Not Disturb","SetDND","SetDND",""},
+{{"Roster"},"Send message to selected contact","SendMessage","SendMessage","CONTROL+M"},
+{{"Roster"},"Add contact to roster","AddContact","AddContact","CONTROL+A"},
+{{"Roster"},"Remove selected conatct","RemoveContact","RemoveContact","CONTROL+R"},
+{{"Roster"},"Toggle topmost","Topmost","Topmost","CONTROL+T"},
+{{"Message Window"},"Toggle Bold","Bold","Bold","CONTROL+B"},
+{{"Message Window"},"Toggle Italic","Italic","Italic","CONTROL+I"},
+{{"Message Window"},"Toggle Underline","Underline","Underline","CONTROL+U"},
+{{"Message Window"},"Toggle History","History","History","CONTROL+H"},
+{{"Message Window"},"Send Message","Send/Reply","SendReply","ALT+S"}
+}
+                
+global constant EVENTS_SECTION = 1,
+                EVENTS_CAPTION = 2,
+                EVENTS_MESSAGE = 3,
+                EVENTS_ID      = 4,
+                EVENTS_DEFAULT = 5
+                
+
+procedure InitHotKeys()
+    for i = 1 to length(EVENTS_HOTKEYS) do
+        settings_RegisterSetting("hotkeys",EVENTS_HOTKEYS[i][EVENTS_ID],EVENTS_HOTKEYS[i][EVENTS_DEFAULT])
+    end for
+end procedure
+InitHotKeys()
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+--Set winid to 0 to recieve events for all windows
+global procedure events_SetHandler(atom winid, atom routineid)
+    atom loc
+    loc = sub_find(winid,Handlers,1)
+    if loc = 0 then
+        Handlers = append(Handlers,{winid,{}})
+        loc = length(Handlers)
+    end if
+    if not find(routineid,Handlers[loc][2]) then --check that this routine id hasn't already been registered
+        Handlers[loc][2] &= routineid
+    end if
+end procedure
+
+global procedure events_SendEvent(atom winid, sequence event)
+    event = lower(event)
+    for i = 1 to length(Handlers) do
+        --I think the risk of a hwnd being equal to a win32lib id is pretty slim so this should be fine...
+        if Handlers[i][1] = winid or Handlers[i][1] = 0 or getHandle(Handlers[i][1]) = winid then
+            for n = 1 to length(Handlers[i][2]) do
+                call_proc(Handlers[i][2][n],{Handlers[i][1],event})
+            end for
+        end if
+    end for
+end procedure
+
+procedure KeyDown(object Data,atom keycode,atom shift)
+    sequence KeysDown
+    KeysDown = vk_GetDownKeys()
+    for i = 1 to length(EVENTS_HOTKEYS) do
+        if equal(settings_Get("hotkeys",EVENTS_HOTKEYS[i][EVENTS_ID]),KeysDown) then
+            events_SendEvent(c_func(dllGetForegroundWindow,{}),EVENTS_HOTKEYS[i][EVENTS_MESSAGE])
+            --return
+        end if
+    end for
+end procedure
+keys_OnKeyDown(0,routine_id("KeyDown"),0)
+
+--Roster and Message windows forward their Skinx events here
+global procedure events_SkinxEventHandler(atom winid, sequence area, sequence event, object params)
+    events_SendEvent(winid,event)
+end procedure

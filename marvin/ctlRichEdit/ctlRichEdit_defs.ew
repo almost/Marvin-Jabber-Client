@@ -1,0 +1,536 @@
+-- ctlRichEdit control definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--Provide a transparent richedit control with a custom scrollbar
+include ctlVScrollBar\ctlVScrollBar_decs.ew
+include ctlVScrollBar\ctlVScrollBar_defs.ew
+include xhtmlrtf.ew
+
+global constant CTLRICHEDIT_TEXT    = 1,
+                CTLRICHEDIT_RTF     = 2,
+                CTLRICHEDIT_HTML    = 3,
+                
+                CTLRICHEDIT_ADD     = 1,
+                CTLRICHEDIT_REPLACE = 2
+                
+constant ENM_REQUESTRESIZE  = #40000,
+         EM_SETEVENTMASK    = WM_USER + 69,
+         EN_REQUESTRESIZE   = #701,
+         EM_REQUESTRESIZE   = WM_USER + 65,
+         EM_GETSCROLLPOS    = WM_USER + 221,
+         EM_SETSCROLLPOS    = WM_USER + 222,
+         ENM_SCROLL         = #00000004,
+         EN_MSGFILTER       = #0700,
+         ENM_KEYEVENTS      = #10000,
+         EM_CHARFROMPOS     = #D7
+
+         
+constant EN_SELCHANGE  = #702,
+         ENM_SELCHANGE = #80000
+         
+constant SCF_ALL = #4
+
+constant DEFAULT_FONT = "Arial",
+         DEFAULT_FONTSIZE = 10
+         
+constant MAX_LINK_SIZE = 500
+
+
+--BEGIN INSTANCE UNIQUE VARS---------------
+sequence WinID
+WinID = {}
+sequence RichEditID
+RichEditID = {}
+sequence ScrollID
+ScrollID = {}
+sequence MainArea
+MainArea = {}
+sequence ScrollArea
+ScrollArea = {}
+sequence OldOnEvent
+OldOnEvent = {}
+sequence MultiLine
+MultiLine = {}
+sequence SelchangeEvent
+SelchangeEvent = {}
+sequence PreviewKeysEvent --Is passed (index,keycode,shift) and returns 1 for proccess or 0 for ignore
+PreviewKeysEvent = {}
+sequence HyperlinkEvent --Is passed (index,message (window message such as WM_MOUSEMOVE),uri)
+HyperlinkEvent = {}
+sequence ScrollEvent
+ScrollEvent = {}
+sequence DefaultFont
+DefaultFont = {}
+sequence DefaultFontSize
+DefaultFontSize = {}
+--END INSTANCE UNIQUE VARS---------------
+
+procedure SetDefaults(integer index)
+    atom mem
+    mem = struct_CHARFORMAT(or_bits(CFM_FACE,CFM_SIZE),0,DefaultFontSize[index]*20,0,0,0,0,DefaultFont[index])
+    if sendMessage(RichEditID[index],EM_SETCHARFORMAT,SCF_ALL,mem) then end if
+    release_mem(mem)
+end procedure
+
+global function ctlrichedit_GetScrollPos(integer index)
+    atom memPOINT,ret
+    memPOINT = allocate(8)  
+    if sendMessage(RichEditID[index],EM_GETSCROLLPOS,0,memPOINT) then end if
+    ret = peek4u(memPOINT+4)
+    free(memPOINT)    
+    return ret
+end function
+
+global procedure ctlrichedit_SetScrollPos(integer index,atom val)
+    atom memPOINT
+    memPOINT = allocate(8)
+    poke4(memPOINT,{0,val})
+    if sendMessage(RichEditID[index],EM_SETSCROLLPOS,0,memPOINT) then end if
+    free(memPOINT)    
+end procedure
+
+procedure ScrollEvent_scrollbar(atom scrollid)
+    integer index
+    index =  find (scrollid,ScrollID)
+    ctlrichedit_SetScrollPos(index,ctlvscrollbar_GetPosition(scrollid))
+    
+    if ScrollEvent[index] != -1 then
+        call_proc(ScrollEvent[index] ,{index})
+    end if
+end procedure
+
+procedure WindowEvent(atom event, atom wParam, atom lParam)
+    object height
+    sequence extent
+    integer index    
+    
+    if event = WM_NOTIFY then
+        index =  find (getId(peek4u(lParam)),RichEditID)
+        if peek4u(lParam+8) = EN_REQUESTRESIZE  then --lParam+8 = code
+            if MultiLine[index] then
+                height = getCtlSize(RichEditID[index])
+
+                extent = getTextExtent(RichEditID[index],"A")
+
+                ctlvscrollbar_SetChange(ScrollID[index],{extent[2],height[2]/2})
+
+                height = peek4u(lParam+12+12) - peek4u(lParam+12+4) -height[2] --bottom member minus top member of the rect member of the REQSIZE structure
+                if height < 0 then height = 0 end if
+                ctlvscrollbar_SetRange(ScrollID[index],{0,height})
+            end if
+        elsif peek4u(lParam+8) = EN_SELCHANGE then 
+            if SelchangeEvent[index] != -1 then
+                call_proc(SelchangeEvent[index],{index})
+            end if
+        elsif peek4u(lParam+8) = EN_MSGFILTER then 
+            if peek4u(lParam+12) = WM_KEYDOWN then
+                if PreviewKeysEvent[index] != -1 then
+                    if not call_func(PreviewKeysEvent[index],{index,peek4u(lParam+16),
+                     (and_bits(w32Func( xGetKeyState, {VK_CONTROL} ),#8000)!=0)*ControlMask+
+                     (and_bits(w32Func( xGetKeyState, {VK_SHIFT} ),#8000)!=0)*ShiftMask+
+                     (and_bits(w32Func( xGetKeyState, {VK_MENU} ),#8000)!=0)*AltMask}) then
+                       returnValue(1) 
+                    else
+                       returnValue(0)
+                    end if
+                end if
+           end if
+        end if
+    elsif event = WM_COMMAND then
+        index =  find (getId(lParam),RichEditID)
+        if floor(wParam / #10000) = EN_VSCROLL then
+            if MultiLine[index] then
+                --The richedit has been scroled, probably by the arrow keys or the wheel on a wheel mouse
+                ctlvscrollbar_SetPosition(ScrollID[index],ctlrichedit_GetScrollPos(index))
+                
+                if ScrollEvent[index] != -1 then
+                    call_proc(ScrollEvent[index] ,{index})
+                end if
+            end if
+        end if
+    end if
+    
+    index =  find (getSelf(),WinID)
+    if index != 0 and OldOnEvent[index] != -1 then
+        call_proc(OldOnEvent[index],{event,wParam,lParam})
+    end if
+end procedure
+
+--Action can be constant or range (two element sequence) to replace
+global procedure ctlrichedit_SetText(integer index, integer Type, object Action, object Text)
+    sequence rect
+    atom mem
+    
+    if Type = CTLRICHEDIT_HTML then
+        Text = xhtmlrtf_XHTML2RTF(Text,1)
+        Type = CTLRICHEDIT_RTF
+    elsif Type = CTLRICHEDIT_RTF then
+        if length(Text) < 6 or not equal(Text[1..6],"{\\rtf1") then
+            Text = xhtmlrtf_RTFHeaders(Text)
+        end if
+    end if
+    
+    if sequence(Action) then
+        setVisible(RichEditID[index],0)
+        rect = getRect(RichEditID[index])
+        repaintRect(WinID[index],rect[1],rect[2],rect[3],rect[4])
+    end if
+    
+    if atom(Action) and Action=CTLRICHEDIT_REPLACE then
+        setText(RichEditID[index],"")
+    else
+        if sequence(Action) then
+            if sendMessage(RichEditID[index],EM_SETSEL, Action[1], Action[2] ) then end if
+            Action = CTLRICHEDIT_ADD
+        else
+            --Moves the text input to the end of the richedit, only works with richedit 3
+            --I'm using this method becuase I'm going to have to distribute richedit 3 with
+            --the client anyway (it's the only version that has any sort of support for scrolling)
+            if sendMessage(RichEditID[index],EM_SETSEL, -1, -1  ) then end if
+        end if
+    end if
+    if length(Text) = 0 then
+        --Can't stream in zero length strings...
+        mem = allocate_string("")
+        if sendMessage(RichEditID[index],EM_REPLACESEL,0,mem) then end if
+        free(mem)
+    elsif Type = CTLRICHEDIT_TEXT or length(Text) = 0 then
+        if Action = CTLRICHEDIT_REPLACE then
+            setText(RichEditID[index],Text)
+            SetDefaults(index)
+        else
+            putStream(RichEditID[index],or_bits(StreamText,StreamSelection),Text)
+        end if
+    else
+        putStream(RichEditID[index],or_bits(StreamRTF,StreamSelection),Text)
+    end if
+    
+    setVisible(RichEditID[index],1)
+end procedure
+
+global function ctlrichedit_GetText(integer index, integer Type)
+    if Type = CTLRICHEDIT_TEXT then
+        return getRichText(RichEditID[index],{0,0})
+    elsif Type = CTLRICHEDIT_RTF then
+        return getStream(RichEditID[index],StreamRTF)
+    elsif Type = CTLRICHEDIT_HTML then
+        return xhtmlrtf_RTF2XHTML(getStream(RichEditID[index],StreamRTF))
+    end if
+end function
+
+procedure onresize(atom style, atom x, atom y)
+    if sendMessage( getSelf(), EM_REQUESTRESIZE, 0,0 ) then end if
+end procedure
+
+constant START_TAG = "<a href=\"",
+         END_TAG   = "</a>"
+constant IDC_HAND = 32649
+procedure onevent(atom event, atom wParam, atom lParam)
+    atom index,mem
+    object pos
+    sequence rtf,uri
+    atom loc
+    index = find(getSelf(),RichEditID)
+    
+    if index = 0 then return end if
+    
+    if HyperlinkEvent[index] != -1 and find(event,{WM_LBUTTONDBLCLK,WM_RBUTTONDBLCLK,WM_LBUTTONDOWN,WM_RBUTTONDOWN,
+                                            WM_MBUTTONDOWN,WM_MOUSEMOVE,WM_LBUTTONUP,WM_RBUTTONUP,WM_MBUTTONUP}) then
+        -- Get the char that was clicked on
+        mem = allocate(8)
+        pos = getPosition(RichEditID[index])
+        poke4(mem,getMousePos()-getClientPoint(WinID[index],pos[1],pos[2]))
+        pos = sendMessage(RichEditID[index],EM_CHARFROMPOS,0,mem)
+        free(mem)
+
+        -- The way I handle links (when converting from XHTML) is to enclose them in an html-like anchor tag, 
+        -- I make this tag hidden so it will only show up if the user copies the
+        -- text to somewhere which pastes plain text. This markup can be searched for
+        -- when the user clicks on text. I know it looks like a rather odd way of doing
+        -- things but the RichEdit control doesn't support links properly....
+        
+        -- Get the rtf in a range of MAX_LINK_SIZE arround the location
+        rtf = getRichText(RichEditID[index], {pos-MAX_LINK_SIZE,pos})
+        -- Find a link tag
+        for i = length(rtf)-length(START_TAG) to 1 by -1 do
+            if equal(rtf[i..i+length(END_TAG)-1],END_TAG) then
+                exit -- There's a link but it doesn't encompas this bit of text
+            elsif equal(rtf[i..i+length(START_TAG)-1],START_TAG) then
+                -- Found what looks like a start tag
+                rtf = rtf[i+length(START_TAG)..length(rtf)]
+                loc = find('\"',rtf)
+                if loc then
+                    -- Got the URI!
+                    uri = rtf[1..loc-1]
+                    setHint(RichEditID[index],uri)
+                    setMousePointer(RichEditID[index],IDC_HAND)
+                    call_proc(HyperlinkEvent[index],{index,event,uri})
+                    return
+                end if
+            end if
+        end for
+        setMousePointer(RichEditID[index],0)
+        setHint(RichEditID[index],"")
+    end if
+end procedure
+
+-- To be called from the hyperlink event to overide the default tooltip for a link
+global procedure ctlrichedit_SetLinkHint(integer index, sequence tip)
+    setHint(RichEditID[index],tip)
+end procedure
+
+global procedure ctlrichedit_SetBold(integer index, integer val)
+    atom mem
+    mem = struct_CHARFORMAT(CFM_BOLD,CFE_BOLD*(val!=0),0,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_SETCHARFORMAT,SCF_SELECTION,mem) then end if
+    release_mem(mem)
+end procedure
+
+global function ctlrichedit_GetBold(integer index) --0 if not bold, 1 if bold
+    atom mem,ret
+    mem = struct_CHARFORMAT(0,0,0,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_GETCHARFORMAT,SCF_SELECTION,mem) then end if
+    ret = and_bits(fetch(mem,CHARFORMAT_dwEffects),CFE_BOLD)!=0
+    release_mem(mem)
+    return ret
+end function
+
+global procedure ctlrichedit_SetItalic(integer index, integer val)
+    atom mem
+    mem = struct_CHARFORMAT(CFM_ITALIC,CFE_ITALIC*(val!=0),0,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_SETCHARFORMAT,SCF_SELECTION,mem) then end if
+    release_mem(mem)
+end procedure
+
+global function ctlrichedit_GetItalic(integer index)
+    atom mem,ret
+    mem = struct_CHARFORMAT(0,0,0,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_GETCHARFORMAT,SCF_SELECTION,mem) then end if
+    ret = and_bits(fetch(mem,CHARFORMAT_dwEffects),CFE_ITALIC)!=0
+    release_mem(mem)
+    return ret
+end function
+
+global procedure ctlrichedit_SetUnderline(integer index, integer val)
+    atom mem
+    mem = struct_CHARFORMAT(CFM_UNDERLINE,CFE_UNDERLINE*(val!=0),0,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_SETCHARFORMAT,SCF_SELECTION,mem) then end if
+    release_mem(mem)
+end procedure
+
+global function ctlrichedit_GetUnderline(integer index)
+    atom mem,ret
+    mem = struct_CHARFORMAT(0,0,0,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_GETCHARFORMAT,SCF_SELECTION,mem) then end if
+    ret = and_bits(fetch(mem,CHARFORMAT_dwEffects),CFE_UNDERLINE)!=0
+    release_mem(mem)
+    return ret
+end function
+
+global procedure ctlrichedit_SetFont(integer index, sequence val)
+    atom mem
+    mem = struct_CHARFORMAT(CFM_FACE,0,0,0,0,0,0,val)
+    if sendMessage(RichEditID[index],EM_SETCHARFORMAT,SCF_SELECTION,mem) then end if
+    release_mem(mem)
+end procedure
+
+global function ctlrichedit_GetFont(integer index)
+    atom mem
+    sequence ret
+    mem = struct_CHARFORMAT(0,0,0,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_GETCHARFORMAT,SCF_SELECTION,mem) then end if
+    ret = fetch(mem,CHARFORMAT_szFaceName)
+    release_mem(mem)
+    return ret
+end function
+
+global procedure ctlrichedit_SetSize(integer index, integer val)
+    atom mem
+    mem = struct_CHARFORMAT(CFM_SIZE,0,val*20,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_SETCHARFORMAT,SCF_SELECTION,mem) then end if
+    release_mem(mem)
+end procedure
+
+global function ctlrichedit_GetSize(integer index)
+    atom mem,ret
+    mem = struct_CHARFORMAT(0,0,0,0,0,0,0,"")
+    if sendMessage(RichEditID[index],EM_GETCHARFORMAT,SCF_SELECTION,mem) then end if
+    ret = floor(fetch(mem,CHARFORMAT_yHeight)/20)
+    release_mem(mem)
+    return ret
+end function
+
+global function ctlrichedit_Create(atom winid, sequence mainarea, object scrollarea,integer multiline)
+    sequence Styles
+    --Thanks very much to Derek Parnell for helping me get the right combination of style flags (both the Multi and Single line versions)
+    if multiline then
+        Styles = {{ WS_CHILD,
+                    WS_VISIBLE,
+                    ES_DISABLENOSCROLL,
+                    ES_AUTOVSCROLL,--added to allow scrolling with arrow keys
+                    WS_TABSTOP,
+                    ES_SAVESEL,
+                    ES_MULTILINE,
+                    ES_NOHIDESEL},
+                  { WS_EX_TOOLWINDOW,
+                    WS_EX_TRANSPARENT}}
+    else --SingleLine
+        Styles = {{ WS_CHILD,
+                    WS_VISIBLE,
+                    WS_HSCROLL,
+                    WS_TABSTOP,
+                    ES_SAVESEL},
+                  { WS_EX_TOOLWINDOW,
+                    WS_EX_TRANSPARENT}}
+    end if
+    RichEditID   &= skinx_CreateControl(winid,mainarea,RichEdit,"",Styles[1],Styles[2])
+    MultiLine &= multiline
+
+    --Set the RichEdit's event mask so that it sends the EN_REQUESTRESIZE message
+    if sendMessage(RichEditID[length(RichEditID)],EM_SETEVENTMASK,0,or_all({ENM_REQUESTRESIZE,ENM_SCROLL,ENM_SELCHANGE,ENM_KEYEVENTS,
+          sendMessage(RichEditID[length(RichEditID)],EM_SETEVENTMASK,0,0 )})) then end if
+    if sendMessage(RichEditID[length(RichEditID)],EM_LIMITTEXT,-1,0) then end if
+    
+    OldOnEvent &= onEvent[winid]
+    onEvent[winid] = routine_id("WindowEvent")
+    
+    
+    if multiline then
+        ScrollID   &= ctlvscrollbar_Create(winid,scrollarea,routine_id("ScrollEvent_scrollbar"))
+    else
+        ScrollID   &= 0
+    end if
+    
+    WinID      &= winid
+        
+    MainArea    = append(MainArea,mainarea)
+    ScrollArea  = append(ScrollArea,scrollarea)
+    
+    SelchangeEvent &= -1
+    
+    PreviewKeysEvent &= -1
+    
+    HyperlinkEvent &= -1
+    
+    ScrollEvent &= -1
+    
+    DefaultFont = append(DefaultFont,DEFAULT_FONT)
+    DefaultFontSize &= DEFAULT_FONTSIZE
+    
+    SetDefaults(length(WinID))
+    
+    onResize[RichEditID[length(RichEditID)]] = routine_id("onresize")
+    onEvent[RichEditID[length(RichEditID)]] = routine_id("onevent")
+    
+    return length(WinID)
+end function
+
+global procedure ctlrichedit_SetReadOnly(integer index, integer val)
+    if sendMessage(RichEditID[index],EM_SETREADONLY,val,0) then end if
+end procedure
+
+global procedure ctlrichedit_SetHideChars(integer index, integer val)
+    if val then
+        if sendMessage(RichEditID[index],EM_SETPASSWORDCHAR,'*',0) then end if
+    else
+        if sendMessage(RichEditID[index],EM_SETPASSWORDCHAR,0,0) then end if
+    end if
+end procedure
+
+global procedure ctlrichedit_Destroy(integer index)
+    destroy(RichEditID[index])
+    RichEditID[index] = -1
+end procedure
+
+global procedure ctlrichedit_SetSelchangeEvent(integer index, atom selchangeevent)
+    SelchangeEvent[index] = selchangeevent
+end procedure
+
+global procedure ctlrichedit_SetPreviewKeysEvent(integer index, atom previewkeysevent)
+    PreviewKeysEvent[index] = previewkeysevent
+end procedure
+
+global procedure ctlrichedit_SetScrollEvent(integer index, atom scrollevent)
+    ScrollEvent[index] = scrollevent
+end procedure
+
+global procedure ctlrichedit_SetHyperlinkEvent(integer index, atom hyperlinkevent)
+    HyperlinkEvent[index] = hyperlinkevent
+end procedure
+
+global function ctlrichedit_GetFirstVisibleChar(integer index)
+    return sendMessage(RichEditID[index],EM_LINEINDEX,sendMessage(RichEditID[index],EM_GETFIRSTVISIBLELINE,0,0),0)
+end function
+
+global function ctlrichedit_GetFirstVisibleLine(integer index)
+    return sendMessage(RichEditID[index],EM_GETFIRSTVISIBLELINE,0,0)
+end function
+
+global function ctlrichedit_GetCharCount(integer index)
+    integer charcount
+    atom mem
+    mem = allocate(8)
+    poke4(mem,{and_bits(GTL_PRECISE,GTL_NUMCHARS),CP_ACP})
+    charcount = sendMessage(RichEditID[index],EM_GETTEXTLENGTHEX,mem,0)
+    free(mem)
+    return charcount
+end function
+
+global procedure ctlrichedit_SetDefaultFont(integer index,sequence val)
+    DefaultFont[index] = val
+    if ctlrichedit_GetCharCount(index) = 0 then
+        SetDefaults(index)
+    end if
+end procedure
+
+global procedure ctlrichedit_SetDefaultFontSize(integer index,integer val)
+    DefaultFontSize[index] = val
+    if ctlrichedit_GetCharCount(index) = 0 then
+        SetDefaults(index)
+    end if
+end procedure
+
+global function ctlrichedit_GetSelRange(integer index)
+    atom CHARRANGE
+    sequence ret
+    CHARRANGE = allocate(8)
+    if sendMessage(RichEditID[index],EM_EXGETSEL,0,CHARRANGE) then end if
+    ret = {peek4u(CHARRANGE),peek4u(CHARRANGE+4)}
+    free(CHARRANGE)
+    return ret
+end function
+
+global procedure ctlrichedit_SetSelRange(integer index,sequence range)
+    atom CHARRANGE
+    CHARRANGE = allocate(8)
+    poke4(CHARRANGE,range)
+    if sendMessage(RichEditID[index],EM_EXSETSEL,0,CHARRANGE) then end if
+    free(CHARRANGE)
+end procedure
+
+global function ctlrichedit_Win32LibID(integer index)
+    return RichEditID[index]
+end function

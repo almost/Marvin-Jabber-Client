@@ -1,0 +1,346 @@
+-- Handles logging of messages
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include jabber.ew
+include file.e
+include get.e
+include machine.e
+include datetime.e
+include wildcard.e
+
+--Format for .idx file      size: description
+constant IDX_OFFSET     = 1, --4: the offset in the .log file where this message may be found
+         IDX_LENGTH     = 2, --2: The total length of the xml in the .msg file describing this message
+         IDX_TIME       = 3, --4: The time the message was logged (seconds since the epoch: 1970-1-1)
+         IDX_MSGLENGTH  = 4, --2: The length of the text of the message (useful for allocating space?)
+         IDX_FLAGS      = 5, --1: Flags [sent(recieved if 0)],
+         IDXSIZE = {4,2,4,2,1},  --List of sizes of each element of the IDX record structure
+         IDXPOS  = {0,4,6,10,12},
+         BLANK_IDX = {0,0,0,0,0}
+constant IDX_FLAG_SENT = 1
+atom SIZEOF_IDX
+SIZEOF_IDX = 0
+for i = 1 to length(IDXSIZE) do
+    SIZEOF_IDX +=  IDXSIZE[i]
+end for
+
+constant SECONDSPERYEAR = 31536000,
+         SECONDSPERDAY  = 86400,
+         SECONDSPERHOUR = 3600
+
+
+function RemoveJIDResource(sequence JID)
+    atom loc
+    loc = find('/',JID)
+    return JID[1..loc-1+((loc=0)*(length(JID)+1))]
+end function
+
+function BytesToInt(sequence bytes)
+    return bytes_to_int(bytes & repeat(0,4-length(bytes)))
+end function
+
+--Ensures that required directorys exist
+procedure CreateDirs()
+    --Make sure the users data directory exists
+    if createDirectory("data") then end if
+    if createDirectory("data\\" & RemoveJIDResource(jabber_CurrentJID())) then end if
+end procedure
+
+function GetIDXRecordBytes(sequence IDXRecord)
+    sequence bytes
+    if length(IDXRecord) != length(IDXSIZE) then
+        return 0
+    end if
+    bytes = {}
+    for i = 1 to length(IDXRecord) do
+        bytes &= int_to_bytes(IDXRecord[i])
+        bytes = bytes[1..length(bytes)-(4-IDXSIZE[i])]
+    end for
+    return bytes
+end function
+
+global procedure log_AddMessage(sequence Message)
+    sequence MessageXML,user,RemoteJID,IDXRecord
+    atom Sent --1 if this message is being sent to remote user or 0 if it's been recieved
+    atom Offset
+    atom fn
+    
+    --Ensure that required directory structure is in place
+    CreateDirs()
+    
+    --Get the local users JID without resource
+    user = lower(RemoveJIDResource(jabber_CurrentJID()))
+    --Get the user who is being sent the message by local user or who has sent the message to local user
+    if equal(user,lower(RemoveJIDResource(Message[MESSAGE_TO]))) then
+        --Message has been recieved by local user
+        RemoteJID = RemoveJIDResource(Message[MESSAGE_FROM])
+        Sent = 0
+    else
+        --Message has been sent by local user
+        RemoteJID = RemoveJIDResource(Message[MESSAGE_TO])
+        Sent = 1
+    end if
+    
+    --Deparse the message to XML
+    MessageXML = message_GetXML(Message)
+
+    --Write to .msg file
+    fn = open("data\\"&user&"\\"&RemoteJID&".msg","ab")
+    Offset = where(fn) 
+    puts(fn,MessageXML)
+    close(fn)
+    
+    --Write to .idx file
+    IDXRecord = BLANK_IDX
+    IDXRecord[IDX_OFFSET]    = Offset
+    IDXRecord[IDX_LENGTH]    = length(MessageXML)
+    IDXRecord[IDX_TIME]      = secondsSinceEpoch(DateTimeToSeconds(nowDateTime()))
+    IDXRecord[IDX_MSGLENGTH] = length(Message[MESSAGE_BODY])
+    IDXRecord[IDX_FLAGS]     = (IDX_FLAG_SENT*Sent)
+    fn = open("data\\"&user&"\\"&RemoteJID&".idx","ab")
+    puts(fn,GetIDXRecordBytes(IDXRecord))
+    close(fn)
+end procedure
+
+global function log_MessageCount(sequence JID)
+    sequence user
+    atom fn,count
+    user = RemoveJIDResource(jabber_CurrentJID())
+    JID = RemoveJIDResource(JID)
+    count = 0
+    fn = open("data\\"&user&"\\"&JID&".idx","ab")
+    if fn != -1 then
+        count = floor(where(fn)/SIZEOF_IDX) --where will be the total size + 1 so a fraction is returned, floor gets around this while also proccessing zero size correctly
+        close(fn)
+    end if
+    return count
+end function
+
+function ReadIDXField(sequence JID, object num, atom field)
+    sequence user
+    atom fn
+    sequence values
+    if atom(num) then num = {num,num} end if
+    user = RemoveJIDResource(jabber_CurrentJID())
+    JID = RemoveJIDResource(JID)
+    
+    fn = open("data\\"&user&"\\"&JID&".idx","rb")
+    if fn != -1 then
+        values = {}
+        for i = num[1] to num[2] do
+            if seek(fn,(i-1)*SIZEOF_IDX+IDXPOS[field]) then
+                exit
+            end if
+            values &= BytesToInt(get_bytes(fn, IDXSIZE[field]))
+        end for
+        close(fn)
+        return values
+    else
+        return {}
+    end if    
+end function
+
+global function log_MessageSizes(sequence JID, object num) --num can be a range, numbering starts at 1
+    return ReadIDXField(JID,num,IDX_MSGLENGTH)
+end function
+
+global function log_MessageTimes(sequence JID, object num) --num can be a range, numbering starts at 1
+    sequence Dates
+    Dates = ReadIDXField(JID,num,IDX_TIME)
+    for i = 1 to length(Dates) do
+        Dates[i] = secondsToDateTime(EpochTimeTo1ADTime(Dates[i]))
+    end for
+    return Dates
+end function
+
+global function log_MessageSizeTotal(sequence JID, object num) --num can be a range, numbering starts at 1
+    sequence user
+    atom fn,size
+    if atom(num) then num = {num,num} end if
+    user = RemoveJIDResource(jabber_CurrentJID())
+    JID = RemoveJIDResource(JID)
+    
+    fn = open("data\\"&user&"\\"&JID&".idx","rb")
+    if fn != -1 then
+        size = {}
+        for i = num[1] to num[2] do
+            if seek(fn,(i-1)*SIZEOF_IDX+IDXPOS[IDX_MSGLENGTH]) then
+                close(fn)
+                exit
+            end if
+            size += BytesToInt(get_bytes(fn, IDXSIZE[IDX_MSGLENGTH]))
+        end for
+        close(fn)
+        return size
+    else
+        return 0
+    end if
+end function
+
+global function log_GetMessage(sequence JID, object num) --num can be a range, numbering starts at 1
+    sequence user
+    atom idxfn,msgfn
+    sequence Messages
+
+    if atom(num) then num = {num,num} end if
+    
+    user = RemoveJIDResource(jabber_CurrentJID())
+    JID = RemoveJIDResource(JID)
+        
+    idxfn= open("data\\"&user&"\\"&JID&".idx","rb")
+    msgfn = open("data\\"&user&"\\"&JID&".msg","rb")
+    if idxfn != -1 and msgfn != -1 then
+        Messages = {}
+        for i = num[1] to num[2] do
+            if seek(idxfn,(i-1)*SIZEOF_IDX+IDXPOS[IDX_OFFSET]) then
+                exit
+            end if
+            if seek(msgfn,BytesToInt(get_bytes(idxfn, IDXSIZE[IDX_OFFSET]))) then
+                exit
+            end if
+            Messages = append(Messages,message_Parse(get_bytes(msgfn,BytesToInt(get_bytes(idxfn, IDXSIZE[IDX_LENGTH])))))
+        end for
+        close(idxfn)
+        close(msgfn)
+        return Messages
+    else
+        if idxfn != -1 then
+            close(idxfn)
+        end if
+        if msgfn != -1 then
+            close(msgfn)
+        end if
+        return {}
+    end if    
+end function
+
+global constant LOG_SEARCHWHOLEWORDS    = 1,
+                LOG_SEARCHCASESENSITIVE = 2,
+                LOG_SEARCHDOWN          = 4, -- SEARCHING UPWARDS IS NOT YET FULLY TESTED AND DOESN'T SEEM TO WORK QUITE RIGHT
+                LOG_SEARCHSENT          = 8,
+                LOG_SEARCHRECEIVED       = 16
+--The CanceledSearches variable is a list of searches that should be canceled
+sequence CanceledSearches
+CanceledSearches = {}
+--Returns -1 if cancled, 0 if nothing is found or index of found item
+global function log_Search(sequence JID, integer curmessage,sequence searchstring,integer flags)
+    sequence user
+    atom idxfn,msgfn
+    atom postparsefails
+    sequence message
+    atom loc
+    
+    user = RemoveJIDResource(jabber_CurrentJID())
+    JID = RemoveJIDResource(JID)
+    
+    --check if a search for this JID had previously been cancled, if so then remove it from CanceledSearches
+    if find(JID,CanceledSearches) then
+        CanceledSearches = CanceledSearches[1..find(JID,CanceledSearches)-1]&CanceledSearches[find(JID,CanceledSearches)+1..length(CanceledSearches)]
+    end if
+    
+    if not and_bits(flags,LOG_SEARCHCASESENSITIVE) then
+        --convert the searchstring to lowercase, this search should be case insensitive
+        searchstring = lower(searchstring)
+    end if
+        
+    idxfn= open("data\\"&user&"\\"&JID&".idx","rb")
+    msgfn = open("data\\"&user&"\\"&JID&".msg","rb")
+    if idxfn != -1 and msgfn != -1 then
+        --Cycle through messages searching for 
+        postparsefails = 0
+        while curmessage <= log_MessageCount(JID) and curmessage >= 1 do
+            if seek(idxfn,(curmessage-1)*SIZEOF_IDX+IDXPOS[IDX_FLAGS]) then
+                exit
+            end if
+            if (and_bits(flags,LOG_SEARCHSENT) and equal(and_bits(get_bytes(idxfn, IDXSIZE[IDX_FLAGS]),IDX_FLAG_SENT),{IDX_FLAG_SENT})) or
+               (and_bits(flags,LOG_SEARCHRECEIVED) and not equal(and_bits(get_bytes(idxfn, IDXSIZE[IDX_FLAGS]),IDX_FLAG_SENT),{IDX_FLAG_SENT})) then
+                if seek(idxfn,(curmessage-1)*SIZEOF_IDX+IDXPOS[IDX_OFFSET]) then
+                    exit
+                end if
+                if seek(msgfn,BytesToInt(get_bytes(idxfn, IDXSIZE[IDX_OFFSET]))) then
+                    exit
+                end if
+                message = get_bytes(msgfn,BytesToInt(get_bytes(idxfn, IDXSIZE[IDX_LENGTH])))
+                if not and_bits(flags,LOG_SEARCHCASESENSITIVE) then
+                    --All the relavent xml tags in jabber are lower case anyway, so conveting the whole thing is the most efficient way...
+                    message = lower(message)
+                end if
+                --We can do a quick search of the xml without parseing it
+                --postparsefails is incrimented each time the string is found in the xml of the message but not the message itself, 
+                --this means that if the user is search for something that is always in the xml then this stage will be skiped and things will be sped up a bit
+                if postparsefails > 5 or match(searchstring,message) then
+                    --we know the word is contained in the xml, now we need to parse the xml to check that it actualy ocurs in the message itsefl
+                    message = message_Parse(message)
+                    loc = match(searchstring,message[MESSAGE_BODY])
+                    if loc then
+                        if and_bits(flags,LOG_SEARCHWHOLEWORDS) then
+                            if (loc = 1 or not find(message[MESSAGE_BODY][loc-1],"abcdefghijklmnopqrstuvwxyz1234567890")) and
+                               (loc = length(message[MESSAGE_BODY])-length(searchstring)+1 or not find(message[MESSAGE_BODY][loc+length(searchstring)],"abcdefghijklmnopqrstuvwxyz1234567890")) then
+                                close(idxfn)
+                                close(msgfn)
+                                return curmessage
+                            end if
+                        else
+                            close(idxfn)
+                            close(msgfn)
+                            return curmessage
+                        end if
+                    else
+                        postparsefails += 1
+                    end if
+                end if
+                --This could take a long time, so allow other events proccessing time
+                doEvents(0)
+            end if
+            --Increase the current message counter by one
+            if and_bits(flags,LOG_SEARCHDOWN) then
+                curmessage += 1
+            else
+                curmessage -= 1
+            end if
+            
+            if find(JID,CanceledSearches) then
+                --This search has been canceled
+                close(idxfn)
+                close(msgfn)
+                return -1
+            end if
+        end while
+    else
+        if idxfn != -1 then
+            close(idxfn)
+        end if
+        if msgfn != -1 then
+            close(msgfn)
+        end if
+    end if   
+    close(idxfn)
+    close(msgfn)
+    return 0
+end function
+
+global procedure log_CancelSearch(sequence JID)
+    CanceledSearches = append(CanceledSearches,JID)
+end procedure

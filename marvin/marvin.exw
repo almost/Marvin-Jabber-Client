@@ -1,0 +1,330 @@
+-- Marvin Jabber Client - Main File
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+global constant CLIENT_NAME="marvin",
+                CLIENT_NAME_SHOW="Marvin Jabber Client"
+global sequence CLIENT_VERSION CLIENT_VERSION="0.0.6+ DEVEL"
+                
+global constant DEFAULT_SKIN = "metal"
+
+global integer RUNNING_FROM_SOURCE
+
+include machine.e
+include wildcard.e
+
+-- Check if this is a bound version or a if Marvin is being run from source:
+sequence CommandLine
+CommandLine = command_line()    
+if not (length(CommandLine[2]) > 3 and equal(lower(CommandLine[2][length(CommandLine[2])-3..length(CommandLine[2])]),".exw")) then
+    RUNNING_FROM_SOURCE = 0
+else
+    RUNNING_FROM_SOURCE = 1
+    CLIENT_VERSION &= " (source)"
+end if
+
+-- BEGIN Crash handleing and error diagnositics
+sequence Date
+if not RUNNING_FROM_SOURCE then
+    -- Running as a bound exe
+    Date = date()
+    crash_file("marvin.err")
+    crash_message("A fatal error occurred and Marvin had to be shut down. I'm very sorry\n" &
+                  "for any inconvenience caused. A file named \"marvin.err\"\n" &
+                  "has been generated in your Marvin directory, please e-mail this to\n" &
+                  "tom@almostobsolete.net along with any other information you may have\n" &
+                  "about what caused the crash as this will greatly help me in tracking\n" &
+                  "down the problem.\n" &
+                  "Thanks!")
+end if
+-- END Crash handleing and error diagnositics
+                
+global atom StartInTray --set this to one on startup to make the roster min to tray
+StartInTray = 0
+
+without warning
+include win32lib.ew
+-- Use logical resolution for font sizing, makes it consistant (ie the same number of pixels) whatever the resolution
+if useLogicalResolution(1) then end if
+
+global constant wndEventProcessor = create(Window, CLIENT_NAME, 0,0, 0,0, 0, {WS_POPUP} )                        
+
+include keys.ew
+include jabber.ew
+include timers.ew
+include settings.ew
+include skinx.ew
+include errors.ew
+
+object SkinResult
+
+SkinResult = skinx_LoadSkin(settings_Get("Skin","Last"))
+if sequence(SkinResult) then
+    ShowError("Unable to load skin: " & settings_Get("Skin","Last") & " returned error \""& SkinResult & "\", loading default skin (" & DEFAULT_SKIN & ")")
+    settings_Save("Skin","Last",DEFAULT_SKIN)
+    SkinResult = skinx_LoadSkin(DEFAULT_SKIN)
+    if sequence(SkinResult) then
+        ShowError("Unable to load default skin: " & DEFAULT_SKIN & " returned error \""& SkinResult & "\"")
+        abort(1)
+    end if
+end if
+--Load windows
+
+include ctlVScrollBar\ctlVScrollBar_decs.ew
+
+include ctlVScrollBar\ctlVScrollBar_defs.ew
+
+include events.ew
+
+include wndNotification\wndNotification_decs.ew
+include wndShowState\wndShowState_decs.ew
+include wndGateways\wndGateways_decs.ew
+include wndDebug\wndDebug_decs.ew
+include wndSettings\wndSettings_decs.ew
+include wndChangeSkin\wndChangeSkin_decs.ew
+include wndConnecting\wndConnecting_decs.ew
+include wndLogin\wndLogin_decs.ew
+include wndaddcontact\wndaddcontact_decs.ew
+include wndsubscriptionrequest\wndsubscriptionrequest_decs.ew
+include wndrenamecontact\wndrenamecontact_decs.ew
+include wndRoster\wndRoster_decs.ew
+
+include messages.ew
+include infoquery.ew
+include shutdown.ew
+
+include wndNotification\wndNotification_defs.ew
+include wndShowState\wndShowState_defs.ew
+include wndGateways\wndGateways_defs.ew
+include wndDebug\wndDebug_defs.ew
+include wndSettings\wndSettings_defs.ew
+include wndChangeSkin\wndChangeSkin_defs.ew
+include wndConnecting\wndConnecting_defs.ew
+include wndLogin\wndLogin_defs.ew
+include wndaddcontact\wndaddcontact_defs.ew
+include wndsubscriptionrequest\wndsubscriptionrequest_defs.ew
+include wndrenamecontact\wndrenamecontact_defs.ew
+include wndRoster\wndRoster_defs.ew
+
+include inactivity.ew
+
+--------------------------
+
+procedure RefreshRoster()
+    --sequence s
+    --Do a full refresh of the roster, when individual items are updated they are pushed and handled seperatly
+    wndroster_EraseItems()
+    wndroster_UpdateItem(jabber_EnumRosterItems())
+    --s = jabber_EnumRosterItems()
+    --for i = 1 to length(s) do
+    --  puts(1,s[i]&"\n")
+    --end for
+end procedure
+
+
+--Jabber library Events
+procedure onStateChange(atom state,sequence text)
+    wndconnecting_ChangeText(text)
+end procedure
+jabber_onStateChange = routine_id("onStateChange")
+
+procedure onError(atom code, object servermessage)
+    if atom(servermessage) then
+        ShowError(JABBER_ERRMESSAGES[code])
+    else
+        ShowError(JABBER_ERRMESSAGES[code] & " (" & servermessage & ")")
+    end if
+    
+    if code = JABBER_ERR_REGISTER_FAILED then
+        --Set the NewAcount toggle on the wndLogin window to true, so the user can just enter a new username and click log in again
+        ctltoggle_SetState(wndlogin_NewAcount,1)
+    end if
+end procedure
+jabber_onError = routine_id("onError")
+
+procedure onDisconnect()
+    wndconnecting_Close() --won't do anything if it's allready closed
+    wndroster_Close()
+    wndlogin_Open()
+    systraymanage_Hide()
+end procedure
+jabber_onDisconnect = routine_id("onDisconnect")
+
+procedure onConnect()
+    wndconnecting_ChangeText("Recieving settings")
+    settings_Reload()
+end procedure
+jabber_onConnect = routine_id("onConnect")
+
+procedure onPriorityChange()
+    jabber_SetPriority(settings_Get("Login","Priority"))
+end procedure
+settings_NotifyOnChange("Login","Priority",routine_id("onPriorityChange"))
+
+procedure onRecieved_Settings() --to be called upon connection when settings have been recieved, shows any messages stored in messages.tmp
+    wndconnecting_Close()
+    wndroster_Open() --option to start minimized or hidden?
+    RefreshRoster()
+    systraymanage_Show()
+    --Setting the priority will send a presence packet so no need to send another
+    jabber_SetPriority(settings_Get("Login","Priority"))
+    systraymanage_Update()
+    --jabber_SetShowState(JABBER_SHOWSTATE_NOCHANGE,0)
+end procedure
+settings_onRecieved(routine_id("onRecieved_Settings"))
+
+procedure onRosterUpdate(sequence JID,atom UpdateType, atom OldValue)
+    object CurrentValue,Sound
+    if UpdateType = JABBER_ROSTERUPDATE_UPDATE or UpdateType = JABBER_ROSTERUPDATE_ADD or  UpdateType = JABBER_ROSTERUPDATE_STATUS then
+        wndroster_UpdateItem(JID)
+        if UpdateType = JABBER_ROSTERUPDATE_STATUS then
+            CurrentValue = jabber_rosterGetStatus(JID)
+            CurrentValue = CurrentValue[1]
+            
+            if CurrentValue = JABBER_SHOWSTATE_OFFLINE and OldValue != JABBER_SHOWSTATE_OFFLINE then
+                --Do offline user stuff for JID
+                if  settings_Get("Sounds","Enable") then
+                    Sound = settings_Get("Sounds","ContactOffline")
+                    if sequence(Sound) and playSound(Sound) then end if
+                end if
+                if settings_Get("Notification","PresenceEnable") then
+                    wndnotification_Show(jabber_rosterGetNick(JID) & " has gone offline")
+                end if
+            elsif CurrentValue != JABBER_SHOWSTATE_OFFLINE and OldValue = JABBER_SHOWSTATE_OFFLINE then
+                --Do online user stuff for JID
+                if  settings_Get("Sounds","Enable") then
+                    Sound = settings_Get("Sounds","ContactOnline")
+                    if sequence(Sound) and playSound(Sound) then end if
+                end if
+                if settings_Get("Notification","PresenceEnable") then
+                    wndnotification_Show(jabber_rosterGetNick(JID) & " has has come online")
+                end if
+            end if
+            messages_PresenceChange(JID)
+        end if
+    elsif UpdateType = JABBER_ROSTERUPDATE_REMOVE then
+        wndroster_DeleteItem(JID)
+--      if UpdateType = JABBER_ROSTERUPDATE_STATUS then
+--          wndroster_UpdateRosterItem(JID)
+--      end if
+    elsif UpdateType = JABBER_ROSTERUPDATE_SUBSCRIPTION then
+        if not jabber_rosterGetSubscriptionTo(JID) and jabber_rosterGetAsk(JID) = JABBER_ROSTER_ASK_SUBSCRIBE then
+            if message_box(jabber_rosterGetNick(JID) & " (" & JID & ") declined your subscription request.", CLIENT_NAME_SHOW, MB_ICONINFORMATION) then end if
+        end if
+    end if
+    --TODO: handle subscription event
+end procedure
+jabber_onRosterUpdate = routine_id("onRosterUpdate")
+
+procedure onShowStateChange(atom State,sequence Text)
+    systraymanage_Update()
+    wndroster_ShowStateChanged()
+end procedure
+jabber_onShowStateChange = routine_id("onShowStateChange")
+
+procedure onRequestSubscription(sequence JID, sequence Reason)
+    wndsubscriptionrequest_Open(JID)
+end procedure
+jabber_onRequestSubscription = routine_id("onRequestSubscription")
+
+procedure Event(atom id, sequence event)
+    if equal(event,"logoff") then
+        if jabber_State != JABBER_S_CLOSED then
+            jabber_Disconnect(1)
+        end if
+    --BEGIN STATUS SET COMMANDS
+    elsif equal(event,"setavailable") then
+        jabber_SetShowState(JABBER_SHOWSTATE_AVAILABLE,settings_Get("Status","DefaultAvailable"))
+    elsif equal(event,"setchat") then
+        jabber_SetShowState(JABBER_SHOWSTATE_CHAT,settings_Get("Status","DefaultChat"))
+    elsif equal(event,"setaway") then
+        jabber_SetShowState(JABBER_SHOWSTATE_AWAY,settings_Get("Status","DefaultAway"))
+    elsif equal(event,"setxa") then
+        jabber_SetShowState(JABBER_SHOWSTATE_XA,settings_Get("Status","DefaultXA"))
+    elsif equal(event,"setdnd") then
+        jabber_SetShowState(JABBER_SHOWSTATE_DND,settings_Get("Status","DefaultDND"))
+    elsif equal(event,"setcustom") then
+        wndshowstate_Open()
+    --END STATUS SET COMMANDS
+    elsif equal(event,"togglesounds") then
+        settings_Save("Sounds","Enable",not settings_Get("Sounds","Enable"))
+    end if
+end procedure
+events_SetHandler(0,routine_id("Event"))
+--------------------------
+
+--Win32Lib Events
+procedure KeepAliveTimer()
+    if jabber_State = JABBER_S_CONNECTED then
+        jabber_SendKeepAlive()
+    end if
+end procedure
+GetTimerEvent(routine_id("KeepAliveTimer"),60000)
+
+--wndRoster
+procedure onOpen_wndEventProcessor()
+    ----just for testing, we should realy display a connect dialog...
+    --wndlogin_Connect(SERVER,USER,PASS,"marvin")
+    --And now we do :)
+    if settings_Get("Login","AutoLogin") then
+        wndlogin_Connect(settings_Get("Login","Server"),
+                         settings_Get("Login","Username"),
+                         settings_Get("Login","Password")-15,
+                         settings_Get("Login","Resource"),
+                         0)
+    else
+        wndlogin_Open()
+    end if
+end procedure
+
+
+
+--Misc
+function AppCleanUp(integer ErrCode, sequence ErrText, integer ControlId, integer LastCleanUp)
+  --Clean up the jabber library, it needs to free winsock stuff
+  if jabber_CleanUp() then end if
+  systraymanage_Hide()
+  return 0 -- Continue with other clean up routines.
+end function
+--------------------------
+
+
+sequence cmd
+cmd = command_line()
+if find("/min",lower(cmd)) or find("-min",lower(cmd)) then
+    StartInTray = 1
+end if
+
+
+--Set up jabber library events
+
+--jabber_onMessage is handled in Messsages.ew
+--Set up win32lib events
+--wndEventProcessor:
+onOpen  [wndEventProcessor] = routine_id("onOpen_wndEventProcessor")
+--Link in clean-up routine
+if attachCleanUp( routine_id("AppCleanUp" )) then end if
+--Lets go!
+WinMain(wndEventProcessor,Normal)
+if AppCleanUp(0,{},0,0) then end if --make sure it's called in a non-abort situation

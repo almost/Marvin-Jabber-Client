@@ -1,0 +1,51 @@
+22/June/2001
+Started changelog file
+22/june/2001 (2)
+Fixed bug in the reading of skin.xml
+26/june/2001
+Started using SourceForge
+Changed name to Marvin
+Added system tray icon
+2/July/2001: 0.0.2
+Started using version *numbers* ;)
+Switching between skins
+Sounds
+Gateway status is now shown
+Context menus for roster items
+Add contacts
+Remove contacts
+17/August/2001: 0.0.3
+More presentable default skin
+GUI for message formatting
+New acount creation
+Bug fixes :)
+10/October/2001: 0.0.4
+Settings window
+Messgaes can be set to not pop up
+New message icon flashes (only when messages do not pop up)
+Tooltips for roster items
+Remembers window sizes
+Enter or Ctl-Enter (selectable) to send messages
+More efficient roster handleing
+Lots of small changes and bug fixes
+3/November/2001: 0.0.4b
+Noticed annoying bug, multi-lined messages no longer worked! Fixed :)
+27/November/2001: 0.0.5
+Message History
+XML Debug Window (left alt-keypad minus)
+Gateway setup
+Auto away
+And of course lots of small additions and bug squishings
+11/March/2002: 0.0.6
+Hot key support
+Notification box which appearsabove system tray to notify user of messages (optional)
+Enhanced history display (date stamps, search etc...)
+Windows 2000 Alpha Blending transparency support (Windows 2000/XP only)
+Topmost toggle for Roster window
+User status changes can be shown in chat
+Support for "composing" message event (allows you to see when the other person is replying)
+Custom status supported
+Roster font and back color customizable
+Status of remote users now shown in message windows
+Changes to skin format (see skinchanges.txt in the docs directory)
+Lots and lots of bugs fixed and large internal parts rewritten

@@ -1,0 +1,169 @@
+-- ctlDropDown control definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+constant MAX_HEIGHT = 150
+
+--BEGIN INSTANCE UNIQUE VARS---------------
+
+sequence WinID
+WinID = {}
+sequence ValueTextVar
+ValueTextVar = {}
+sequence ToggleArea
+ToggleArea = {}
+sequence ListItems
+ListItems = {}
+sequence Selected
+Selected = {}
+sequence ChangeEvent
+ChangeEvent = {}
+
+--END INSTANCE UNIQUE VARS---------------
+
+atom CurrentDropDown --index of control that is currently droped down or 0
+CurrentDropDown = 0
+
+procedure DropDown(integer index)
+    sequence Rect,Extent
+    atom Height
+    
+    CurrentDropDown = index
+    
+    --Ensure the state of the toggle control is down
+    skinx_SetState(WinID[index],ToggleArea[index],"open")
+    
+    --Get the rect of the Richedit control
+    Rect = skinx_GetAreaRect(WinID[index],ValueTextVar[index])
+    
+    --Add items to the list
+    eraseItems(ctldropdown_List)
+    if length(ListItems[index]) > 0 then
+        addItem(ctldropdown_List,ListItems[index])
+    end if
+    
+    setIndex(ctldropdown_List,find(Selected[index],ListItems[index]))
+    
+    --Work out the best height
+    Extent = getCharExtent(ctldropdown_List)
+    Height = Extent[2] * length(ListItems[index])+1
+    if Height > MAX_HEIGHT then
+        Height = MAX_HEIGHT
+    end if
+    
+    Rect = ClientToScreen(WinID[index],Rect[1],Rect[4]) & {Rect[3]-Rect[1],Height}
+    
+    if Height = MAX_HEIGHT then
+        --Add some extra width for the scrollbar
+        Rect[3] = Rect[3] + 16
+    end if
+    
+    --Set the rect of the window and make it a TOPMOST window
+    if w32Func(xSetWindowPos,{getHandle(ctldropdown_DropDownWindow),HWND_TOPMOST,Rect[1],Rect[2],Rect[3],Rect[4],0}) then end if
+    
+    --Open the dropdown window
+    openWindow(ctldropdown_DropDownWindow,Normal)
+    
+    --Set the rect of the list
+    setRect(ctldropdown_List,-1,-1,Rect[3]+1,Rect[4]+1,1)
+end procedure
+
+global function ctldropdown_Create(integer winid, sequence valuetextvar, sequence togglearea)    
+    WinID &= winid
+    
+    ValueTextVar = append(ValueTextVar,valuetextvar)
+    
+    ToggleArea = append(ToggleArea,togglearea)
+    
+    ListItems = append(ListItems,{})
+    
+    Selected = append(Selected,0)
+    
+    ChangeEvent &= -1
+    
+    skinx_SetState(winid,togglearea,"closed")
+    
+    skinx_SetTextVar(winid,valuetextvar,"")
+    return length(WinID)
+end function
+
+global procedure ctldropdown_SetListItems(integer index,sequence listitems)
+    ListItems[index] = listitems
+    if not find(Selected[index],listitems) then
+        Selected[index] = 0
+        skinx_SetTextVar(WinID[index],ValueTextVar[index],"")
+    end if
+end procedure
+
+global procedure ctldropdown_SetSelected(integer index, sequence selected)
+    Selected[index] = selected
+    skinx_SetTextVar(WinID[index],ValueTextVar[index],Selected[index])
+end procedure
+
+global function ctldropdown_GetSelected(integer index)
+    return Selected[index]
+end function
+
+global procedure ctldropdown_SetChangeEvent(integer index, atom rid)
+    ChangeEvent[index] = rid
+end procedure
+
+global procedure ctldropdown_DropDown(integer index)
+    DropDown(index)
+end procedure
+
+procedure onDropDownEvent(atom event, atom wParam, atom lParam)
+    if event = WM_ACTIVATE then
+        if and_bits(wParam,#FFFF) = WA_INACTIVE then
+            closeWindow(ctldropdown_DropDownWindow)
+        end if
+    end if
+end procedure
+
+procedure onDropDownClose()
+    if getIndex(ctldropdown_List) = 0 then
+        --Selected[CurrentDropDown] = 0
+    else
+        Selected[CurrentDropDown] = getItem(ctldropdown_List,getIndex(ctldropdown_List))
+    end if
+    skinx_SetTextVar(WinID[CurrentDropDown],ValueTextVar[CurrentDropDown],Selected[CurrentDropDown])
+    skinx_SetState(WinID[CurrentDropDown],ToggleArea[CurrentDropDown],"closed")
+    if ChangeEvent[CurrentDropDown] != -1 then
+        call_proc(ChangeEvent[CurrentDropDown],{CurrentDropDown})
+    end if
+    CurrentDropDown = 0
+end procedure
+
+procedure onDropDownClick()
+    closeWindow(ctldropdown_DropDownWindow)
+end procedure
+
+procedure onDropDownOpen()
+    w32Proc( xSetFocus, {getHandle(ctldropdown_List)} )
+end procedure
+
+onEvent[ctldropdown_DropDownWindow] = routine_id("onDropDownEvent")
+onOpen [ctldropdown_DropDownWindow] = routine_id("onDropDownOpen")
+onClose[ctldropdown_DropDownWindow] = routine_id("onDropDownClose")
+onClick[ctldropdown_List          ] = routine_id("onDropDownClick")

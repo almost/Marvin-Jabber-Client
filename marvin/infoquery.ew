@@ -1,0 +1,67 @@
+-- Routines for handleing IQ stuff should go in here
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+sequence Handlers -- A sequence of {NS,Routine ID} pairs
+Handlers = {}
+
+procedure onIQ(sequence From, sequence ID, sequence Type, sequence XMLNS, atom XML)
+    for i = 1 to length(Handlers) do
+        if equal(Handlers[i][1],XMLNS) then
+            if Handlers[i][2] != -1 then
+                call_proc(Handlers[i][2],{From,ID,Type,XMLNS,XML})
+            end if
+        end if
+    end for
+end procedure
+
+jabber_onIQ = routine_id("onIQ")
+
+global procedure infoquery_SetHandler(sequence XMLNS, integer RoutineID)
+    Handlers = append(Handlers,{XMLNS,RoutineID})
+end procedure
+
+-- Simple IQ stuff below here
+-----------------------------
+procedure onIQ_Version(sequence From, sequence ID, sequence Type, sequence XMLNS, atom XML)
+    integer EEBAX
+    if equal(Type,"get") then
+        EEBAX = jabber_GetEEBAX()
+        eebax_StartElement(EEBAX,"iq",{{"type","result"},{"id",ID},{"to",From}},0)
+        eebax_StartElement(EEBAX,"query",{{"xmlns","jabber:iq:version"}},0)
+        eebax_StartElement(EEBAX,"name",{},0)
+        eebax_Characters(EEBAX,CLIENT_NAME_SHOW)
+        eebax_EndElement(EEBAX,"name")
+        eebax_StartElement(EEBAX,"version",{},0)
+        eebax_Characters(EEBAX,CLIENT_VERSION)
+        eebax_EndElement(EEBAX,"version")
+        eebax_StartElement(EEBAX,"os",{},0)
+        -- Not sure it's wise to advertise which version of windows your using to anyone who asks
+        eebax_Characters(EEBAX,"Windows")
+        eebax_EndElement(EEBAX,"os")
+        eebax_EndElement(EEBAX,"query")
+        eebax_EndElement(EEBAX,"iq")
+    end if
+end procedure
+infoquery_SetHandler("jabber:iq:version",routine_id("onIQ_Version"))

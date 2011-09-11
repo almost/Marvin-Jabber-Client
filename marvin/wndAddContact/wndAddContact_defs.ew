@@ -1,0 +1,97 @@
+-- wndAddContact window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--This window is not skinable
+
+sequence Services
+
+procedure PopulateCombos()
+    sequence list,added
+    eraseItems(wndaddcontact_Service)
+    addItem(wndaddcontact_Service,"Jabber")
+    list = jabber_EnumRosterItems()
+    added = {}
+    Services = {""}
+    for i = 1 to length(list) do
+        if jabber_rosterIsGateway(list[i]) and not find(jabber_serviceGetJID(list[i]),Services) then
+            addItem(wndaddcontact_Service,jabber_serviceGetName(list[i]))
+            Services = append(Services,jabber_serviceGetJID(list[i]))
+        end if
+    end for
+    setIndex(wndaddcontact_Service,1)
+    
+    eraseItems(wndaddcontact_Group)
+    list = jabber_rosterEnumGroups()
+    for i = 1 to length(list) do
+        addItem(wndaddcontact_Group,list[i])
+    end for
+    setText(wndaddcontact_Group,"Contacts")
+end procedure
+wndaddcontact_private_RidPopulateCombos = routine_id("PopulateCombos")
+
+procedure onClick_Add()
+    sequence JID
+    JID = getText(wndaddcontact_ID)
+    if getIndex(wndaddcontact_Service) != 1 then
+        if find('@',JID) then
+            JID[find('@',JID)] = '%'
+        end if
+        JID &= "@"&Services[getIndex(wndaddcontact_Service)]
+    end if
+    jabber_rosterAdd(JID,getText(wndaddcontact_Nickname),{getText(wndaddcontact_Group)},0)
+    
+    setText(wndaddcontact_ID,"")
+    setText(wndaddcontact_Nickname,"")
+    wndaddcontact_Close()
+end procedure
+
+procedure onLostFocus_ID()
+    sequence nick
+    if length(getText(wndaddcontact_Nickname)) = 0 then
+        nick = getText(wndaddcontact_ID)
+        if find('@',nick) then
+            nick = nick[1..find('@',nick)-1]
+        end if
+        setText(wndaddcontact_Nickname,nick)
+    end if
+end procedure
+
+global procedure wndaddcontact_SetJID(sequence JID)
+    PopulateCombos()
+    setText(wndaddcontact_ID,JID)
+    onLostFocus_ID()
+end procedure
+
+procedure Event(atom id, sequence event)
+    if equal(event,"addcontact") then
+        wndaddcontact_Open()
+    end if
+end procedure
+events_SetHandler(0,routine_id("Event"))
+
+onLostFocus[wndaddcontact_ID] = routine_id("onLostFocus_ID")
+onClick[wndaddcontact_cmdAdd] = routine_id("onClick_Add")
+onClick[wndaddcontact_cmdClose] = routine_id("wndaddcontact_Close")

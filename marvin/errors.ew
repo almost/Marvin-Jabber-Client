@@ -1,0 +1,36 @@
+--Error Utilities
+--Thomas Parslow
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+sequence Current --To stop the same error being displayed hundreds of times (as happens sometimes in JIM)
+Current = {}
+
+global procedure ShowError(sequence Message)
+    atom loc
+    if not find(Message,Current) then
+        Current = append(Current,Message)
+        if message_box(Message, CLIENT_NAME_SHOW, MB_ICONERROR) then end if
+        loc = find(Message,Current)
+        Current = Current[1..loc-1]&Current[loc+1..length(Current)]
+    end if
+end procedure

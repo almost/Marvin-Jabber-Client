@@ -1,0 +1,167 @@
+-- wndGateways window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--This window is not skinable
+
+sequence Gateways --sequence of {jid,fields,instructions}
+constant G_JID = 1,
+         G_FIELDS = 2,
+         G_INSTRUCTIONS = 3,
+         
+         F_NAME = 1,
+         F_VALUE = 2
+integer curGateway
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+procedure onresize(atom style, atom x, atom y)
+    --resize all the controls
+    setRect(wndgateways_Instructions,170,10,x-184,50,0)
+    
+    setRect(wndgateways_Gateways,10,10,150,y-55,0)
+    
+    setRect(wndgateways_Register,170,y-65,(x-183)/2-10,25,0)
+    setRect(wndgateways_Remove,(x-183)/2+170+10,y-65,(x-183)/2-10,25,0)
+    
+    setRect(wndgateways_Cancel,x-85,y-35,73,25,0)
+    reSizeProperties(wndgateways_Fields,x-184,y-83-70)
+end procedure
+onResize[wndGateways] = routine_id("onresize")
+
+procedure DisplayGatewayInfo()
+    atom proptype
+    --Yes? then display it
+    --Enable the register and remove buttons
+    setEnable(wndgateways_Register,1)
+    setEnable(wndgateways_Remove,1)
+    --Set the instructions
+    setText(wndgateways_Instructions,Gateways[curGateway][G_INSTRUCTIONS])
+    --Set the fields
+    eraseProperties(wndgateways_Fields)
+    for i = 1 to length(Gateways[curGateway][G_FIELDS]) do
+        if equal(lower(Gateways[curGateway][G_FIELDS][i][F_NAME]),"password") then
+            proptype = propTypePassword
+        else
+            proptype = propTypeText
+        end if
+        addProperty(wndgateways_Fields,Gateways[curGateway][G_FIELDS][i][F_NAME],Gateways[curGateway][G_FIELDS][i][F_VALUE],1,{},proptype)
+    end for
+end procedure
+
+procedure RecieveGatewayInfo(sequence Gateway,sequence Fields, sequence Instructions)
+    integer g
+    if sub_find(Gateway,Gateways,G_JID) then
+        --Is this the currently selected gateway
+        g = sub_find(Gateway,Gateways,G_JID)  
+        Gateways[g][G_FIELDS] = Fields
+        Gateways[g][G_INSTRUCTIONS] = Instructions
+        
+        if g = curGateway then
+            DisplayGatewayInfo()
+        end if
+    end if
+end procedure
+
+procedure RetrieveGatewayInfo()
+    if getIndex(wndgateways_Gateways) and not equal(getIndex(wndgateways_Gateways),curGateway) then
+         curGateway = getIndex(wndgateways_Gateways)
+    
+        --Disable the register and remove buttons
+        setEnable(wndgateways_Register,0)
+        setEnable(wndgateways_Remove,0)
+        --Set the instructions to nothing
+        setText(wndgateways_Instructions,"")
+        --And finaly clear the properties
+        eraseProperties(wndgateways_Fields)
+        
+        if length(Gateways[curGateway][G_FIELDS]) = 0 then
+            setText(wndgateways_Instructions,"Get registration requirements for " & jabber_serviceGetName(Gateways[curGateway][G_JID])&"...")
+            jabber_GetRegistrationInfo(Gateways[curGateway][G_JID],routine_id("RecieveGatewayInfo"))
+        else
+            DisplayGatewayInfo()
+        end if
+    end if
+end procedure
+onChange[wndgateways_Gateways] = routine_id("RetrieveGatewayInfo")
+
+procedure ShowGateways()
+    sequence Services
+    
+    eraseItems(wndgateways_Gateways)
+    curGateway = 0
+    
+    --Show all the server's gateways
+    --Enumerate all services
+    Services = jabber_EnumServices()
+    Gateways = {}
+    for i = 1 to length(Services) do
+        if find("jabber:iq:gateway",jabber_serviceGetNSs(Services[i])) then
+            --It's a gateway
+            Gateways = append(Gateways,{Services[i],{},""})
+            addItem(wndgateways_Gateways,jabber_serviceGetName(Services[i]))
+        end if
+    end for
+    
+    --Disable the register and remove buttons
+    setEnable(wndgateways_Register,0)
+    setEnable(wndgateways_Remove,0)
+    --Set the instructions to nothing
+    setText(wndgateways_Instructions,"")
+    --And finaly clear the properties
+    eraseProperties(wndgateways_Fields)
+end procedure
+wndgateways_private_RidShowGateways = routine_id("ShowGateways")
+
+procedure onClick_Register()
+    for i = 1 to length(Gateways[curGateway][G_FIELDS]) do
+        Gateways[curGateway][G_FIELDS][i][F_VALUE] = getPropValue(wndgateways_Fields,Gateways[curGateway][G_FIELDS][i][F_NAME])
+    end for
+    jabber_RegisterWithService(Gateways[curGateway][G_JID],Gateways[curGateway][G_FIELDS])
+    setText(wndgateways_Instructions,"Registering....")
+    RetrieveGatewayInfo()
+end procedure
+onClick[wndgateways_Register] = routine_id("onClick_Register")
+
+procedure onClick_Remove()
+    jabber_UnregisterWithService(Gateways[curGateway][G_JID])
+end procedure
+onClick[wndgateways_Remove] = routine_id("onClick_Remove")
+
+procedure Event(atom id, sequence event)
+    if equal(event,"gateways") then
+        wndgateways_Open()
+    end if
+end procedure
+events_SetHandler(0,routine_id("Event"))
+
+onClick[wndgateways_Cancel] = routine_id("wndgateways_Close")

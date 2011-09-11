@@ -1,0 +1,82 @@
+-- Detect User Inactivity and set Auto Away
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--TODO: Would be good if it could detect keyboard activity, but the the only way I can see to do this in 
+--W9x is using a DLL which I'd prefer not to do (btw, it's easy in W2K, might have it detect W2K...)
+
+atom LastActivity
+LastActivity = time()
+sequence LastMousePos
+LastMousePos = {0,0}
+
+atom State
+constant S_NORMAL   = 0,
+         S_AUTOAWAY = 1,
+         S_AUTOXA   = 2
+State = S_NORMAL
+sequence CurrentShowState --Showstate before it was changed
+
+procedure Activity()
+    LastActivity = time()
+    if State != S_NORMAL then
+        --User has become active again
+        jabber_SetShowState(CurrentShowState[1],CurrentShowState[2])
+        State = S_NORMAL
+    end if
+end procedure
+
+procedure InactivityTimer()
+    sequence CurrentMousePos
+    if jabber_State = JABBER_S_CONNECTED and settings_Get("Status","EnableAutoAway") then       
+        CurrentMousePos = getPointerPos()
+        if not equal(CurrentMousePos,LastMousePos) then
+            --The mouse has been moved, reset the LastActivity counter
+            LastMousePos = CurrentMousePos
+            Activity()
+        else
+            --The mouse has not been moved, if there has been a sufficient period of inactivity then set auto away
+            if State = S_NORMAL then
+                CurrentShowState = jabber_GetShowState()
+            end if
+            if CurrentShowState[1] = JABBER_SHOWSTATE_AVAILABLE or CurrentShowState[1] = JABBER_SHOWSTATE_CHAT then
+                if (State = S_NORMAL or State = S_AUTOAWAY) and time() - LastActivity > settings_Get("Status","AutoXA")*60 then
+                    State = S_AUTOXA
+                    jabber_SetShowState(JABBER_SHOWSTATE_XA,settings_Get("Status","AutoXAMessage"))
+                elsif State = S_NORMAL and time() - LastActivity > settings_Get("Status","AutoAway")*60 then
+                    State = S_AUTOAWAY                            
+                    jabber_SetShowState(JABBER_SHOWSTATE_AWAY,settings_Get("Status","AutoAwayMessage"))
+                end if
+            end if
+        end if
+    end if
+end procedure
+GetTimerEvent(routine_id("InactivityTimer"),1000)
+
+procedure KeyPress(atom Data,atom keycode,atom shift)
+    Activity()
+end procedure
+
+keys_OnKeyPress(0,routine_id("KeyPress"),0)

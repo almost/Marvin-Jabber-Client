@@ -1,0 +1,84 @@
+-- wndDebug window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--This window is not skinable
+
+procedure onresize(atom style, atom x, atom y)
+    --resize all the controls
+    setRect(wnddebug_DebugIn,10,10,x-20,y-45-75,0)
+    
+    setRect(wnddebug_DebugOut,10,y-45-60,x-20,y-45-(y-45-60),0)
+    
+    setRect(wnddebug_Send,x-255,y-35,75,25,0)
+    setRect(wnddebug_Clear,x-170,y-35,75,25,0)
+    setRect(wnddebug_Cancel,x-85,y-35,75,25,0)
+end procedure
+
+procedure onClick_Clear()
+    setText(wnddebug_DebugIn,"")
+end procedure
+
+procedure onClick_Send()
+    if jabber_SendRaw(getText(wnddebug_DebugOut)) then end if
+    setText(wnddebug_DebugOut,"")
+end procedure
+
+procedure BytesRecieved(sequence raw)
+    setText(wnddebug_DebugIn,getText(wnddebug_DebugIn)&"RECIEVED: " & raw & {13,10})
+end procedure
+
+procedure BytesSent(sequence raw)
+    setText(wnddebug_DebugIn,getText(wnddebug_DebugIn)&"SENT: " & raw & {13,10})
+end procedure
+
+global procedure wnddebug_Open()
+    openWindow(wndDebug,Normal)
+    jabber_onReceiveBytes = routine_id("BytesRecieved")
+    jabber_onSendBytes     = routine_id("BytesSent")
+end procedure
+
+global procedure wnddebug_Close()
+    closeWindow(wndDebug)
+    jabber_onReceiveBytes = -1
+    jabber_onSendBytes     = -1
+end procedure
+
+procedure KeyDown(atom junk, atom KeyCode, atom Shift)
+    if KeyCode = VK_SUBTRACT then
+        if and_bits(Shift,AltMask ) then
+            wnddebug_Open   ()
+        end if
+    end if
+end procedure
+
+keys_OnKeyDown(0,routine_id("KeyDown"),0)
+
+onClick[wnddebug_Clear]  = routine_id("onClick_Clear")
+onClick[wnddebug_Send]   = routine_id("onClick_Send")
+onClick[wnddebug_Cancel] = routine_id("wnddebug_Close")
+onResize[wndDebug]       = routine_id("onresize")
+
+if sendMessage(wnddebug_DebugIn,EM_SETREADONLY,1,0) then end if

@@ -1,0 +1,658 @@
+-- wndmessage window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--I'm gonna have most of the message proccessing stuff in messages.ew, this just handles message windows
+include ctlLog\ctlLog_decs.ew
+include ctlToggle\ctlToggle_decs.ew
+include ctlDropDown\ctlDropDown_decs.ew
+
+include ctlLog\ctlLog_defs.ew
+include ctlToggle\ctlToggle_defs.ew
+include ctlDropDown\ctlDropDown_defs.ew
+
+-- Fixed version of the function of the same name in win32lib
+-- peek4u changed to peek4s to work with negative mouse coords in multimonitor systems
+object VOID
+function getPointerPos()
+    atom tmpMem
+    sequence xy
+
+    tmpMem = acquire_mem(0, 8)
+
+    VOID = w32Func(xGetCursorPos,{tmpMem})
+
+    xy = peek4s({tmpMem, 2})
+
+    release_mem( tmpMem)
+
+    return xy
+end function
+
+constant USER32 = open_dll("user32")
+constant FlashWindow = define_c_proc(USER32,"FlashWindow",{C_ULONG,C_ULONG})
+constant GDI32 = open_dll("gdi32")
+constant EnumFontFamilies = define_c_proc(GDI32,"EnumFontFamiliesA",{C_ULONG,C_ULONG,C_ULONG,C_ULONG})
+constant LF_FULLFACESIZE = 64
+--constant SetForegroundWindow = define_c_proc(USER32,"SetForegroundWindow",{C_ULONG})
+
+constant mnuMenu        = create(Menu,"Menu",wndEventProcessor,0,0,0,0,0),
+         mnuSend        = create(MenuItem,"&Send",mnuMenu,0,0,0,0,0),
+         mnuReply       = create(MenuItem,"&Reply",mnuMenu,0,0,0,0,0),
+         mnuHistory     = create(MenuItem,"Show &History",mnuMenu,0,0,0,0,0),
+         mnuSearch      = create(MenuItem,"S&earch",mnuMenu,0,0,0,0,0),
+         mnuSeperator1  = create(MenuItem,"-",mnuMenu,0,0,0,0,0),
+         mnuFont        = create(Menu,"&Font",mnuMenu,0,0,0,0,0),
+         mnuSize        = create(Menu,"Si&ze",mnuMenu,0,0,0,0,0),
+         mnuBold        = create(MenuItem,"&Bold",mnuMenu,0,0,0,0,0),
+         mnuItalic      = create(MenuItem,"&Italic",mnuMenu,0,0,0,0,0),
+         mnuUnderline   = create(MenuItem,"&Underline",mnuMenu,0,0,0,0,0),
+         mnuSeperator2  = create(MenuItem,"-",mnuMenu,0,0,0,0,0),
+         mnuAlwaysOnTop = create(MenuItem,"Always on &top",mnuMenu,0,0,0,0,0)
+         
+         
+atom MenuWindow --The window which the menu was opened in 
+         
+sequence FontList
+sequence FontMenus
+
+constant FontSizeList = {8,10,12,14,16,24,32,48}
+sequence FontSizeMenus
+
+--BEGIN INSTANCE UNIQUE VARS---------------
+sequence WinID
+WinID = {}
+sequence MessageControl
+MessageControl = {}
+sequence LogControl
+LogControl = {}
+sequence TopmostToggle
+TopmostToggle = {}
+sequence Messages --for each instance could contain more than one message
+Messages = {}
+sequence Recipients --{JID.JID,...}
+Recipients = {}
+sequence MessageInLowerPane
+MessageInLowerPane = {}
+sequence BoldControl
+BoldControl = {}
+sequence ItalicControl
+ItalicControl = {}
+sequence UnderlineControl
+UnderlineControl = {}
+sequence FontControl
+FontControl = {}
+sequence SizeControl
+SizeControl = {}
+sequence HistoryToggle
+HistoryToggle = {}
+sequence ComposingEventSent
+ComposingEventSent = {}
+sequence AlwaysOnTop
+AlwaysOnTop = {}
+--END INSTANCE UNIQUE VARS---------------
+
+constant WHITESPACE =  {9,10,13,32}
+function ltrim(sequence s)
+    -- discard leading whitespace of sequence s
+    for i = 1 to length(s) do
+        if not find(s[i], WHITESPACE) then  return s[i..length(s)] end if
+    end for
+    return {}
+end function
+
+function rtrim(sequence s)
+    -- discard trailing whitespace of sequence s
+    for i = length(s) to 1 by -1 do
+        if not find(s[i], WHITESPACE) then  return s[1..i] end if
+    end for
+    return {}
+end function
+
+function trim(sequence s)
+    -- discard leading and trailing whitespace of sequence s
+    return ltrim(rtrim(s))
+end function
+
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+procedure wndmessage_MarkMessagesRead(integer id)
+    integer index
+    index = find(id,WinID)
+    for i = 1 to length(Messages[index]) do
+        messages_MessageRead(Messages[index][i])
+    end for
+end procedure
+
+procedure onclose()
+    atom index
+    index = find(getSelf(),WinID)
+    wndmessage_MarkMessagesRead(getSelf())
+    messages_WindowClosed(WinID[index])
+    skinx_RemoveWindow(WinID[index])
+    ctllog_Destroy(LogControl[index])
+    ctlrichedit_Destroy(MessageControl[index])
+    for i = 1 to length(Messages[index]) do
+        message_Delete(Messages[index][i])
+    end for
+    Messages[index] = {}
+end procedure
+
+--update all the areas on the window that should contain text
+procedure SetLabels(integer index)
+    object nick,status
+    --recipientnick: the Nick(s) or JID(s) (if no nick is set) of the recipient(s) or the word "Multiple"
+    --recipientjid: The JID of the recipient or the word "Multiple"
+    --recipientstatus: The status string for the recipient user
+    --recipientshowstate: The show state for the recipient user
+    if length(Recipients[index]) > 1 then
+        skinx_SetTextVar(WinID[index],"$recipientnick$","Multiple")
+        skinx_SetTextVar(WinID[index],"$recipientjid$","Multiple")
+        
+        skinx_SetTextVar(WinID[index],"$recipientstatus$","")
+        skinx_SetTextVar(WinID[index],"$recipientshowstate$","")
+        skinx_SetState(WinID[index],"recipientshowstate","")
+        
+        setText(WinID[index],"Message: Multiple")
+    elsif length(Recipients[index]) = 1 then
+        nick = jabber_rosterGetNick(Recipients[index][1])
+        if atom(nick) or length(nick) = 0 then
+            skinx_SetTextVar(WinID[index],"$recipientnick$",Recipients[index][1])
+            setText(WinID[index],"Message: " & Recipients[index][1])
+        else
+            skinx_SetTextVar(WinID[index],"$recipientnick$",nick)
+            setText(WinID[index],"Message: " & nick)
+        end if
+        skinx_SetTextVar(WinID[index],"$recipientjid$",Recipients[index][1])
+        
+        status = jabber_rosterGetStatus(Recipients[index][1])
+        if atom(status) then
+            skinx_SetTextVar(WinID[index],"$recipientstatus$",JABBER_SHOW_STATES_FRIENDLY[JABBER_SHOWSTATE_OFFLINE])
+            skinx_SetTextVar(WinID[index],"$recipientshowstate$",JABBER_SHOW_STATES_FRIENDLY[JABBER_SHOWSTATE_OFFLINE])
+            skinx_SetState(WinID[index],"recipientshowstate",JABBER_SHOW_STATES[JABBER_SHOWSTATE_OFFLINE])
+        else
+            skinx_SetTextVar(WinID[index],"$recipientstatus$",status[2])
+            skinx_SetTextVar(WinID[index],"$recipientshowstate$",JABBER_SHOW_STATES_FRIENDLY[status[1]])
+            skinx_SetState(WinID[index],"recipientshowstate",JABBER_SHOW_STATES[status[1]])
+        end if
+   end if
+end procedure
+
+global procedure wndmessage_SetRecipients(integer id, sequence JIDs)
+    atom index
+    sequence temp
+    index = find(id,WinID)
+    for i = 1 to length(JIDs) do
+        temp = jabber_SplitJID(JIDs[i])
+        if length(temp[1]) > 0 then
+            JIDs[i] = temp[1]&"@"&temp[2]
+        else
+            JIDs[i] = temp[2]
+        end if
+    end for
+    Recipients[index] = JIDs
+    if MessageInLowerPane[index] then
+        --Clear existing text
+        ctlrichedit_SetText(MessageControl[index],CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,"")        
+        --Turn off read only
+        ctlrichedit_SetReadOnly(MessageControl[index],0)
+    end if
+    SetLabels(index)
+    
+    if length(JIDs) = 1 then    
+        ctllog_InitHistory(LogControl[index],JIDs[1])
+        if ctltoggle_GetState(HistoryToggle[index]) then
+            ctllog_ShowHistory(LogControl[index])
+        end if
+    end if
+end procedure
+
+global procedure SendORReply(integer index)
+    sequence msg
+    atom HTML
+    if MessageInLowerPane[index] then   
+        --reply
+        MessageInLowerPane[index] = 0
+        --Clear existing text
+        ctlrichedit_SetText(MessageControl[index],CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,"")        
+        --Turn off read only
+        ctlrichedit_SetReadOnly(MessageControl[index],0)
+        skinx_SetTextVar(WinID[index],"$send/reply$","Send")
+        skinx_SetState(WinID[index],"send/reply","send")
+        wndmessage_MarkMessagesRead(WinID[index])
+    else
+        --send
+        if length(trim(ctlrichedit_GetText(MessageControl[index],CTLRICHEDIT_TEXT))) = 0 then
+            return
+        end if
+        
+        HTML = ctlrichedit_GetText(MessageControl[index],CTLRICHEDIT_HTML)
+        for i = 1 to length(Recipients[index]) do
+            msg = message_GetBlank()
+            msg[MESSAGE_TYPE]        = "normal"
+            msg[MESSAGE_FROM]        = jabber_CurrentJID()
+            msg[MESSAGE_TO]          = Recipients[index][i]
+            --msg[MESSAGE_SUBJECT] = ""
+            msg[MESSAGE_BODY]        = ctlrichedit_GetText(MessageControl[index],CTLRICHEDIT_TEXT)
+            if length(Messages[index]) > 0 then
+                msg[MESSAGE_THREAD]  = Messages[index][length(Messages[index])][MESSAGE_THREAD]
+            end if
+            if settings_Get("MessageWin","SendHTML") then
+                msg[MESSAGE_HTML]    = HTML
+            end if
+            --msg[MESSAGE_X]         =
+            messages_Send(msg)
+        end for
+        if length(Recipients[index]) > 0 then
+            ctllog_AddMessage(LogControl[index],msg)
+            message_Delete(msg)
+        end if
+        wndmessage_MarkMessagesRead(WinID[index])
+        if settings_Get("MessageWin","CloseAfterSend") then
+            closeWindow(WinID[index])
+        else
+            ctlrichedit_SetText(MessageControl[index],CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,"")        
+        end if
+    end if
+end procedure
+
+procedure UpdateFormatting(integer index)
+    ctltoggle_SetState(BoldControl[index],ctlrichedit_GetBold(MessageControl[index]))
+    ctltoggle_SetState(ItalicControl[index],ctlrichedit_GetItalic(MessageControl[index]))
+    ctltoggle_SetState(UnderlineControl[index],ctlrichedit_GetUnderline(MessageControl[index]))
+    ctldropdown_SetSelected(FontControl[index],ctlrichedit_GetFont(MessageControl[index]))
+    ctldropdown_SetSelected(SizeControl[index],sprint(ctlrichedit_GetSize(MessageControl[index])))
+end procedure
+
+procedure ToggleTopmost(integer index)
+    AlwaysOnTop[index] = not AlwaysOnTop[index]
+    if AlwaysOnTop[index] then
+        moveZOrder(WinID[index],HWND_TOPMOST)
+    else
+        moveZOrder(WinID[index],HWND_NOTOPMOST)
+    end if
+    ctltoggle_SetState(TopmostToggle[index],AlwaysOnTop[index])
+end procedure
+
+procedure wndMessageEvent(atom id, sequence event)
+    sequence mousepos
+    atom index,loc
+    index = find(id,WinID)
+    if equal(event,"send/reply") then
+        SendORReply(index)
+    elsif equal(event,"font") then
+        ctldropdown_DropDown(FontControl[index])
+    elsif equal(event,"size") then
+        ctldropdown_DropDown(SizeControl[index])
+    elsif equal(event,"bold") then
+        ctltoggle_ToggleState(BoldControl[index])
+        if not MessageInLowerPane[index] then
+            ctlrichedit_SetBold(MessageControl[index],ctltoggle_GetState(BoldControl[index]))
+            UpdateFormatting(index)
+        end if
+    elsif equal(event,"italic") then
+        ctltoggle_ToggleState(ItalicControl[index])
+        if not MessageInLowerPane[index] then
+            ctlrichedit_SetItalic(MessageControl[index],ctltoggle_GetState(ItalicControl[index]))
+            UpdateFormatting(index)
+        end if
+    elsif equal(event,"underline") then
+        ctltoggle_ToggleState(UnderlineControl[index])
+        if not MessageInLowerPane[index] then
+            ctlrichedit_SetUnderline(MessageControl[index],ctltoggle_GetState(UnderlineControl[index]))
+            UpdateFormatting(index)
+        end if
+    elsif equal(event,"history") then
+        ctltoggle_ToggleState(HistoryToggle[index])
+        if ctltoggle_GetState(HistoryToggle[index]) then
+            ctllog_ShowHistory(LogControl[index])
+        else
+            ctllog_HideHistory(LogControl[index])        
+        end if 
+    elsif equal(event,"menu") then
+        MenuWindow = index
+        if settings_Get("MessageWin","ShowInMessagePane") and MessageInLowerPane[index] then
+            setEnable(mnuReply,1)
+            setEnable(mnuSend,0)
+        else
+            setEnable(mnuReply,0)
+            setEnable(mnuSend,1)
+        end if
+        if ctltoggle_GetState(HistoryToggle[index]) then
+            setCheck(mnuHistory,1)
+        else
+            setCheck(mnuHistory,0)
+        end if
+        if ctltoggle_GetState(BoldControl[index]) then
+            setCheck(mnuBold,1)
+        else
+            setCheck(mnuBold,0)
+        end if
+        if ctltoggle_GetState(ItalicControl[index]) then
+            setCheck(mnuItalic,1)
+        else
+            setCheck(mnuItalic,0)
+        end if
+        if ctltoggle_GetState(UnderlineControl[index]) then
+            setCheck(mnuUnderline,1)
+        else
+            setCheck(mnuUnderline,0)
+        end if
+        for i = 1 to length(FontMenus) do
+            setCheck(FontMenus[i],0)
+        end for
+        loc = find(ctlrichedit_GetFont(MessageControl[index]),FontList)
+        setCheck(FontMenus[loc],1)
+        for i = 1 to length(FontSizeMenus) do
+            setCheck(FontSizeMenus[i],0)
+        end for
+        loc = find(ctlrichedit_GetSize(MessageControl[index]),FontSizeList)
+        setCheck(FontSizeMenus[loc],1)
+        setCheck(mnuAlwaysOnTop,AlwaysOnTop[index])
+        mousepos = getPointerPos()-4
+        mousepos = ScreenToClient(wndEventProcessor,mousepos[1],mousepos[2])
+        popup(mnuMenu,mousepos[1],mousepos[2])
+    elsif equal(event,"searchlog") then
+        ctllog_Search(LogControl[index])
+    elsif equal(event,"topmost") then
+        ToggleTopmost(index)
+    end if  
+end procedure
+
+procedure onFontChange(integer fontindex)
+    atom index
+    index = find(fontindex,FontControl)
+    if not MessageInLowerPane[index] then
+        ctlrichedit_SetFont(MessageControl[index],ctldropdown_GetSelected(fontindex))
+        UpdateFormatting(index)
+    end if
+end procedure
+
+procedure onSizeChange(integer sizeindex)
+    atom index
+    object val
+    index = find(sizeindex,SizeControl)
+    if not MessageInLowerPane[index] then
+        val = value(ctldropdown_GetSelected(sizeindex))
+        ctlrichedit_SetSize(MessageControl[index],val[2])
+        UpdateFormatting(index)
+    end if
+end procedure
+
+procedure onSelChange(integer messageindex)
+    atom index
+    index = find(messageindex,MessageControl)
+    UpdateFormatting(index)
+end procedure
+
+function EnumFontsCallback(atom lpelf, atom lpntm, atom FontType, atom lParam)
+    FontList = append(FontList,peek_string(lpelf+28))
+    return 1
+end function
+
+procedure OnEvent(atom event, atom wParam, atom lParam)
+    skinx_HandleEvent(getSelf(),event,wParam,lParam)
+    if event = WM_ACTIVATEAPP then
+        if wParam  then
+            --wndmessage_MarkMessagesRead(getSelf())
+        end if
+    elsif event = WM_ACTIVATE then
+        if and_bits(wParam,#FFFF) != WA_INACTIVE then
+            --wndmessage_MarkMessagesRead(getSelf())
+        end if
+    end if
+end procedure
+
+function PreviewKeys(integer messageindex, atom KeyCode, atom Shift)
+    atom index
+    index = find(messageindex,MessageControl)
+    if KeyCode = VK_ENTER and 
+     (and_bits(Shift,ControlMask) and (not settings_Get("MessageWin","EnterSends")) or
+     (not and_bits(Shift,ControlMask) and settings_Get("MessageWin","EnterSends"))) then
+        SendORReply(index)
+        return 0
+    else
+        if settings_Get("MessageWin","EnableComposingEvent") then
+            if length(Messages[index]) > 0 then
+                if ctlrichedit_GetCharCount(MessageControl[index]) = 0 then
+                    if ComposingEventSent[index] then
+                        ComposingEventSent[index] = 0
+                        messages_ClearEvents(Messages[index][length(Messages[index])])
+                    end if
+                else
+                    if not ComposingEventSent[index] then
+                        ComposingEventSent[index] = 1
+                        messages_SendComposingEvent(Messages[index][length(Messages[index])])
+                    end if
+                end if
+            end if
+        end if
+        return 1
+    end if
+end function
+
+global function wndmessage_Create()
+    atom hDC
+    
+    WinID &= skinx_CreateWindow("message","Message", Default,Default,350,250)
+    
+    onEvent[WinID[length(WinID)]] = routine_id("OnEvent")
+    
+    skinx_ChangeEventHandler(WinID[length(WinID)],routine_id("events_SkinxEventHandler"))
+    events_SetHandler(WinID[length(WinID)],routine_id("wndMessageEvent"))
+    
+    onClose[WinID[length(WinID)]] = routine_id("onclose")
+    
+    MessageControl &= ctlrichedit_Create(WinID[length(WinID)],"message","messagescroll",1)
+    ctlrichedit_SetDefaultFont(MessageControl[length(MessageControl)],settings_Get("MessageWin","DefaultFont"))
+    ctlrichedit_SetDefaultFontSize(MessageControl[length(MessageControl)],settings_Get("MessageWin","DefaultFontSize"))
+    ctlrichedit_SetSelchangeEvent(MessageControl[length(MessageControl)],routine_id("onSelChange"))
+    ctlrichedit_SetPreviewKeysEvent(MessageControl[length(MessageControl)],routine_id("PreviewKeys"))
+    
+    LogControl &= ctllog_Create(WinID[length(WinID)],"log","logscroll")
+    
+    TopmostToggle &= ctltoggle_Create(wndRoster,"topmost",{"off","on"})
+    
+    Recipients = append(Recipients,{}) 
+    MessageInLowerPane &= 0
+    
+    BoldControl &= ctltoggle_Create(WinID[length(WinID)],"bold",{"off","on"})
+    
+    ItalicControl &= ctltoggle_Create(WinID[length(WinID)],"italic",{"off","on"})
+
+    UnderlineControl &= ctltoggle_Create(WinID[length(WinID)],"underline",{"off","on"})
+    
+    FontControl &= ctldropdown_Create(WinID[length(WinID)],"font","fontbutton")
+    ctldropdown_SetChangeEvent(FontControl[length(FontControl)],routine_id("onFontChange"))
+   
+    --Populate the font control
+    ctldropdown_SetListItems(FontControl[length(FontControl)],sort(FontList))
+    
+    SizeControl &= ctldropdown_Create(WinID[length(WinID)],"size","sizebutton")
+    ctldropdown_SetChangeEvent(SizeControl[length(SizeControl)],routine_id("onSizeChange"))
+    ctldropdown_SetListItems(SizeControl[length(SizeControl)],{"8","10","12","14","16","24","32","48"})
+
+    HistoryToggle &= ctltoggle_Create(WinID[length(WinID)],"history",{"hide","show"})
+    ctltoggle_SetState(HistoryToggle[length(HistoryToggle)],settings_Get("MessageWin","AutoShowHistory"))
+    
+    skinx_SetTextVar(WinID[length(WinID)],"$send/reply$","Send")
+    skinx_SetState(WinID[length(WinID)],"send/reply","send")
+    
+    Messages = append(Messages,{})
+    
+    ComposingEventSent &= 0
+    
+    AlwaysOnTop &= 0
+    
+    --Update the formating controls
+    UpdateFormatting(length(WinID))    
+
+    return WinID[length(WinID)]
+end function
+ 
+global procedure wndmessage_Open(integer id)
+    openWindow(id,Normal)
+end procedure
+
+procedure ShowMessageInLowerPane(integer index, sequence Message)
+    atom emote
+    emote = 0
+    --Check if it's a "/me" emote, these are handled by gabber and JIM so i'd better do it as well :)
+    if length(Message[MESSAGE_BODY]) > 4 and equal(Message[MESSAGE_BODY][1..4],"/me ") then
+        emote = 1
+        Message[MESSAGE_BODY] = Message[MESSAGE_BODY][5..length(Message[MESSAGE_BODY])]
+    end if
+    
+    if Message[MESSAGE_ERRCODE] != 0 then
+        --This is a returned message, display error
+        ctlrichedit_SetText(MessageControl[index],CTLRICHEDIT_HTML,CTLRICHEDIT_REPLACE,
+            sprintf("<message><body><span style='color: #FF0000;font-family: %s;font-size: %dpt'>ERROR (%d): %s</span></body></message>",
+            {settings_Get("MessageWin","DefaultFont"),settings_Get("MessageWin","DefaultFontSize"),Message[MESSAGE_ERRCODE],Message[MESSAGE_ERRMSG]}))
+    elsif Message[MESSAGE_HTML] = 0 or emote then
+        if emote then
+            ctlrichedit_SetText(MessageControl[index],CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,"*"&Message[MESSAGE_BODY]&"*")
+        else
+            ctlrichedit_SetText(MessageControl[index],CTLRICHEDIT_TEXT,CTLRICHEDIT_REPLACE,Message[MESSAGE_BODY])
+        end if
+    else
+        ctlrichedit_SetText(MessageControl[index],CTLRICHEDIT_HTML,CTLRICHEDIT_REPLACE,Message[MESSAGE_HTML])
+    end if  
+    ctlrichedit_SetReadOnly(MessageControl[index],1)
+end procedure
+
+--Add a message 
+global procedure wndmessage_AddMessage(integer id, sequence Message)
+    atom index
+    index = find(id,WinID)
+    Messages[index] = append(Messages[index],Message)
+    wndmessage_SetRecipients(id,{Message[MESSAGE_FROM]})
+    if settings_Get("MessageWin","ShowInMessagePane") and (MessageInLowerPane[index] or length(ctlrichedit_GetText(MessageControl[index],CTLRICHEDIT_TEXT))=0) then
+        ShowMessageInLowerPane(index,Message)
+        skinx_SetTextVar(id,"$send/reply$","Reply")
+        skinx_SetState(id,"send/reply","reply")
+        MessageInLowerPane[index] = 1
+    else
+        skinx_SetTextVar(id,"$send/reply$","Send")
+        skinx_SetState(id,"send/reply","send")
+    end if
+    ctllog_AddMessage(LogControl[index],Message)
+    
+    c_proc(FlashWindow,{getHandle(WinID[index]),1}) --Make the window flash then invert on the taskbar, to grab the users atention
+end procedure
+
+global procedure wndmessage_SetComposingEvent(integer id, integer replying)
+    if replying then
+        skinx_SetTextVar(id,"$messageevent$","User is replying")
+        skinx_SetState(id,"messageevent","composing")
+    else
+        skinx_SetTextVar(id,"$messageevent$","")
+        skinx_SetState(id,"messageevent","none")
+    end if
+end procedure
+
+global procedure wndmessage_PresenceChange(integer id, sequence JID)
+    atom index
+    index = find(id,WinID)
+    SetLabels(index)
+    ctllog_PresenceChange(LogControl[index],JID)
+end procedure
+
+--Menus
+procedure onClick_FontMenu()
+    atom loc
+    loc = find(getSelf(),FontMenus)
+    ctlrichedit_SetFont(MessageControl[MenuWindow],FontList[loc])
+    UpdateFormatting(MenuWindow)
+end procedure
+
+procedure onClick_SizeMenu()
+    atom loc
+    loc = find(getSelf(),FontSizeMenus)
+    ctlrichedit_SetSize(MessageControl[MenuWindow],FontSizeList[loc])
+    UpdateFormatting(MenuWindow)
+end procedure
+
+procedure onClick_mnuSend_mnuReply()
+    events_SendEvent(WinID[MenuWindow],"send/reply")
+end procedure
+onClick[mnuSend] = routine_id("onClick_mnuSend_mnuReply")
+onClick[mnuReply] = routine_id("onClick_mnuSend_mnuReply")
+
+procedure onClick_mnuHistory()
+    events_SendEvent(WinID[MenuWindow],"history")
+end procedure
+onClick[mnuHistory] = routine_id("onClick_mnuHistory")
+
+procedure onClick_mnuSearch()
+    events_SendEvent(WinID[MenuWindow],"searchlog")
+end procedure
+onClick[mnuSearch] = routine_id("onClick_mnuSearch")
+
+procedure onClick_mnuBold() 
+    events_SendEvent(WinID[MenuWindow],"bold")
+end procedure
+onClick[mnuBold] = routine_id("onClick_mnuBold")
+
+procedure onClick_mnuItalic()
+    events_SendEvent(WinID[MenuWindow],"italic")
+end procedure
+onClick[mnuItalic] = routine_id("onClick_mnuItalic")
+
+procedure onClick_mnuUnderline()
+    events_SendEvent(WinID[MenuWindow],"underline")
+end procedure
+onClick[mnuUnderline] = routine_id("onClick_mnuUnderline")
+
+procedure onClick_mnuAlwaysOnTop()
+    events_SendEvent(WinID[MenuWindow],"topmost")
+end procedure
+onClick[mnuAlwaysOnTop] = routine_id("onClick_mnuAlwaysOnTop")
+
+procedure LoadMenus()
+    atom hDC
+    FontList = {}
+    hDC = getDC(Screen)
+    c_proc(EnumFontFamilies,{hDC,0,call_back(routine_id("EnumFontsCallback")),0})
+    releaseDC(Screen)
+    FontMenus = {}
+    for i = 1 to length(FontList) do
+        FontMenus &= create(MenuItem,FontList[i],mnuFont,0,0,0,0,0)
+        onClick[FontMenus[i]] = routine_id("onClick_FontMenu")
+    end for
+    FontSizeMenus = {}
+    for i = 1 to length(FontSizeList) do
+        FontSizeMenus &= create(MenuItem,sprint(FontSizeList[i]),mnuSize,0,0,0,0,0)
+        onClick[FontSizeMenus[i]] = routine_id("onClick_SizeMenu")
+    end for
+end procedure
+LoadMenus()

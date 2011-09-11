@@ -1,0 +1,1726 @@
+--WinSock.ew (AKA srvsckip.ew, from Hawke's EUServer with modifications by Thomas Parslow (patrat))
+--Supports Async and blocking Windows Sockets
+
+-- WINSOCK.EW -- Euphoria Winsock Wrapper for WSOCK32.DLL
+-- by jesus consuegra (jconsuegra@redestb.es)
+--       and Greg Harris (blackdog@cdc.net)
+-- Homepage: http://www.geocities.com/SiliconValley/Sector/6432/
+--
+-- This file corresponds to version 1.1 of the Windows Sockets
+-- specification.
+--
+-- This file includes nomenclatures Copyrighted (c)1982-1986 by Regents
+-- of the University of California.  All rights reserved.  The
+-- Berkeley Software License Agreement specifies the terms and
+-- conditions for redistribution.
+-- 
+-- Although some constants are not used in this implementation,
+-- they remain here to allow further development.
+--
+-- current release is  release 0.13 pre alpha
+
+
+-- History:                                         
+--
+-- 0.00 pre Alpha  
+--    Basic calls to test suitability. 
+--    Translated <winsock.h> to Euphoria.ew
+-- 0.01 pre Alpha
+--    Implementing WSAStartup and WSACleanup
+-- 0.02 pre Alpha
+--    Renaming functions to WsockXXXXX
+-- 0.03 pre Alpha
+--    Implementing HostInfo,
+--    gethostbyname,inet_addr, gethostbyaddr
+--    Changes in the wrapper structure
+--    Starting the skeleton of a documentation
+-- 0.04 pre Alpha July 7th, 1998.
+--    Changed all c_function names starting by lowercase c to
+--    avoid confusing them with Euphoria native functions.
+--    Implemented htonl, htons, ntohl, ntohs, needed before gethostbyaddr.
+--    Still not being able of seeing hostent struct
+-- 0.05,0.06,0.07 pre Aplha July 11th, 1998
+--    Several changes in naming conventions. Greg
+--    fixed a problem with HostInfo. Writing the real
+--    socket access calls and some windows demos.
+-- 0.08 pre Alpha July 13th, 1998
+--    Implemented socket, closesocket. Readme file.
+--    Changed WsockInit to store the stackdata.
+--    Released LHInfo.exw (Local Host Info demo program).
+--    Released Stackinfo.exw (Prints stack info)
+-- 0.09 pre Alpha, 14th July 1998
+--    Greg has implemented the basics for client server connection
+--    Added a release note.
+-- 0.10 pre Alpha, 26th July 1998
+--    Improved socket tracing
+-- 0.11 pre Alpha, 30th July 1998
+--    Greg fixed bug in WsockReadData
+-- 0.12 pre Alpha, 20th August 1998
+--    Added text to report the errors
+--    Turned global most constants
+-- 0.13 pre Alpha, 26th August 1998
+--    Cosmetic change csocket--> cSocket
+--    Added C definitions for all the remaining functions
+--    Fixed WsockHostInfo to return {HostName,IPAddress}
+
+include machine.e
+without warning
+
+-----ADDED BY PATRAT 5/3/2001 TO MAKE IT WORK WITH THE LATEST WIN32LIB
+function allocate_struct( integer size )
+
+        -- allocate space for a structure
+        -- and initialize to zero
+        
+        atom at
+        
+        at  = allocate( size )
+        mem_set( at, 0, size )
+        
+        return at
+        
+end function
+-------------------------------------------------------------------------
+
+
+atom    SOCKET,
+        WSAData,
+        WSServerNameOrAddress,
+        phostent
+
+------------------------------------------------------------
+-- SocketTrace allows some log messaging to a console box
+------------------------------------------------------------
+global integer SocketTrace              -- Default no tracing = 0
+
+SocketTrace = 0
+
+global sequence StackData               -- To hold Stack info
+constant FD_SETSIZE = 64
+
+
+-- Commands for ioctlsocket(),  taken from the BSD file fcntl.h.
+-- Ioctl's have the command encoded in the lower word,
+-- and the size of any in or out parameters in the upper
+-- word.  The high 2 bits of the upper word are used
+-- to encode the in/out status of the parameter; for now
+-- we restrict parameters to at most 128 bytes.
+
+constant IOCPARM_MASK   =  #7F      -- parameters must be < 128 bytes
+constant IOC_VOID       =  #20000000   -- no parameters
+constant IOC_OUT        =  #40000000   -- copy out parameters
+constant IOC_IN         =  #80000000   -- copy in parameters
+
+--
+-- Protocols
+--
+constant IPPROTO_IP     =  0  -- dummy for IP
+constant IPPROTO_ICMP   =  1  -- control message protocol
+constant IPPROTO_GGP    =  2  -- gateway^2 (deprecated)
+constant IPPROTO_TCP    =  6  -- tcp
+constant IPPROTO_PUP    =  12 -- pup
+constant IPPROTO_UDP    =  17 -- user datagram protocol
+constant IPPROTO_IDP    =  22 -- xns idp
+constant IPPROTO_ND     =  77 -- UNOFFICIAL net disk proto
+
+constant IPPROTO_RAW    =  255   -- raw IP packet
+constant IPPROTO_MAX    =  256
+
+--
+-- Port/socket numbers: network standard functions
+--
+constant IPPORT_ECHO         =    7
+constant IPPORT_DISCARD      =    9
+constant IPPORT_SYSTAT       =    11
+constant IPPORT_DAYTIME      =    13
+constant IPPORT_NETSTAT      =    15
+constant IPPORT_FTP          =    21
+constant IPPORT_TELNET       =    23
+constant IPPORT_SMTP         =    25
+constant IPPORT_TIMESERVER   =    37
+constant IPPORT_NAMESERVER   =    42
+constant IPPORT_WHOIS        =    43
+constant IPPORT_MTP          =    57
+
+--
+-- Port/socket numbers: host specific functions
+--
+constant IPPORT_TFTP         =    69
+constant IPPORT_RJE          =    77
+constant IPPORT_FINGER       =    79
+constant IPPORT_TTYLINK      =    87
+constant IPPORT_SUPDUP       =    95
+
+--
+-- UNIX TCP sockets
+--
+constant IPPORT_EXECSERVER   =    512
+constant IPPORT_LOGINSERVER  =    513
+constant IPPORT_CMDSERVER    =    514
+constant IPPORT_EFSSERVER    =    520
+
+--
+-- UNIX UDP sockets
+--
+constant IPPORT_BIFFUDP      =    512
+constant IPPORT_WHOSERVER    =    513
+constant IPPORT_ROUTESERVER   =   520    -- 520+1 also used
+
+--
+-- Ports < IPPORT_RESERVED are reserved for
+-- privileged processes (e.g. root).
+--
+constant IPPORT_RESERVED     =    1024
+
+--
+-- Link numbers
+--                           
+constant IMPLINK_IP          =    155
+constant IMPLINK_LOWEXPER    =    156
+constant IMPLINK_HIGHEXPER   =    158
+
+--
+-- Definitions of bits in internet address integers.
+-- On subnets, the decomposition of addresses to host and net parts
+-- is done according to subnet mask, not the masks here.
+--
+constant IN_CLASSA_NET       =    #FF000000
+constant IN_CLASSA_NSHIFT    =    24
+constant IN_CLASSA_HOST      =    #00FFFFFF
+constant IN_CLASSA_MAX       =    128
+
+constant IN_CLASSB_NET       =    #FFFF0000
+constant IN_CLASSB_NSHIFT    =    16
+constant IN_CLASSB_HOST      =    #0000FFFF
+constant IN_CLASSB_MAX       =    65536
+
+constant IN_CLASSC_NET       =    #FFFFFF00
+constant IN_CLASSC_NSHIFT    =    8
+constant IN_CLASSC_HOST      =    #000000FF
+
+
+constant INADDR_LOOPBACK     =    #7F000001
+constant INADDR_NONE         =    -1            --  #FFFFFFFF
+
+--
+-- Socket address, internet style.
+--
+
+constant WSADESCRIPTION_LEN   =   256
+constant WSASYS_STATUS_LEN    =   128
+
+--
+-- Options for use with [gs]etsockopt at the IP level.
+--
+constant IP_OPTIONS  =  1     -- set/get IP per-packet options
+
+--
+-- Definitions related to sockets: types, address families, options,
+-- taken from the BSD file sys/socket.h.
+--
+
+--
+-- This is used instead of -1, since the
+-- SOCKET type is unsigned.
+--
+constant VALID_SOCKET   =  (0)
+
+global constant SOCKET_ERROR   = (-1)
+
+--
+-- Types
+--
+global constant SOCK_STREAM =  1  -- stream socket
+global constant SOCK_DGRAM  =  2  -- datagram socket
+constant SOCK_RAW    =  3  -- raw-protocol interface
+constant SOCK_RDM    =  4  -- reliably-delivered message
+constant SOCK_SEQPACKET =  5  -- sequenced packet stream
+
+--
+-- Option flags per-socket.
+--
+constant SO_DEBUG       = #0001     -- turn on debugging info recording
+constant SO_ACCEPTCONN  = #0002     -- socket has had listen()
+constant SO_REUSEADDR   = #0004     -- allow local address reuse
+constant SO_KEEPALIVE   = #0008     -- keep connections alive
+constant SO_DONTROUTE   = #0010     -- just use interface addresses
+constant SO_BROADCAST   = #0020     -- permit sending of broadcast msgs
+constant SO_USELOOPBACK = #0040     -- bypass hardware when possible
+constant SO_LINGER      = #0080     -- linger on close if data present
+constant SO_OOBINLINE   = #0100     -- leave received OOB data in line
+
+--
+-- Additional options.
+--
+constant SO_SNDBUF      = #1001  -- send buFFer size
+constant SO_RCVBUF      = #1002  -- receive buFFer size
+constant SO_SNDLOWAT    = #1003  -- send low-water mark
+constant SO_RCVLOWAT    = #1004  -- receive low-water mark
+constant SO_SNDTIMEO    = #1005  -- send timeout
+constant SO_RCVTIMEO    = #1006  -- receive timeout
+constant SO_ERROR       = #1007  -- get error status and clear
+constant SO_TYPE        = #1008  -- get socket type
+
+--
+-- TCP options.
+--
+constant TCP_NODELAY    = #0001
+
+--
+-- Address families.
+--
+constant AF_UNSPEC      = 0   -- unspecified
+constant AF_UNIX        = 1   -- local to host (pipes, portals)
+global constant AF_INET = 2   -- internetwork: UDP, TCP, etc.
+constant AF_IMPLINK     = 3   -- arpanet imp addresses
+constant AF_PUP         = 4   -- pup protocols: e.g. BSP
+constant AF_CHAOS       = 5   -- mit CHAOS protocols
+constant AF_NS          = 6   -- XEROX NS protocols
+constant AF_IPX         = 6   -- IPX and SPX
+constant AF_ISO         = 7   -- ISO protocols
+constant AF_OSI         = AF_ISO -- OSI is ISO
+constant AF_ECMA        = 8   -- european computer manufacturers
+constant AF_DATAKIT     = 9   -- datakit protocols
+constant AF_CCITT       = 10  -- CCITT protocols, X.25 etc.
+constant AF_SNA         = 11  -- IBM SNA
+constant AF_DECnet      = 12  -- DECnet
+constant AF_DLI         = 13  -- Direct data link interface
+constant AF_LAT         = 14  -- LAT
+constant AF_HYLINK      = 15  -- NSC Hyperchannel
+constant AF_APPLETALK   = 16  -- AppleTalk
+constant AF_NETBIOS     = 17  -- NetBios-style addresses
+                        
+constant AF_MAX         = 18
+
+
+--
+-- Protocol families, same as address families for now.
+--
+constant PF_UNSPEC      = AF_UNSPEC
+constant PF_UNIX        = AF_UNIX
+constant PF_INET        = AF_INET
+constant PF_IMPLINK     = AF_IMPLINK
+constant PF_PUP         = AF_PUP
+constant PF_CHAOS       = AF_CHAOS
+constant PF_NS          = AF_NS
+constant PF_IPX         = AF_IPX
+constant PF_ISO         = AF_ISO
+constant PF_OSI         = AF_OSI
+constant PF_ECMA        = AF_ECMA
+constant PF_DATAKIT     = AF_DATAKIT
+constant PF_CCITT       = AF_CCITT
+constant PF_SNA         = AF_SNA
+constant PF_DECnet      = AF_DECnet
+constant PF_DLI         = AF_DLI
+constant PF_LAT         = AF_LAT
+constant PF_HYLINK      = AF_HYLINK
+constant PF_APPLETALK   = AF_APPLETALK
+
+constant PF_MAX         = AF_MAX
+
+
+--
+-- Level number for (get/set)sockopt() to apply to socket itself.
+--
+constant SOL_SOCKET     = #FFFF          -- options for socket level
+
+--
+-- Maximum queue length specifiable by listen.
+--
+constant SOMAXCONN      = 5
+
+constant MSG_OOB        = #1             -- process out-of-band data
+constant MSG_PEEK       = #2             -- peek at incoming message
+constant MSG_DONTROUTE  = #4             -- send w/o using routing tables
+
+constant MSG_MAXIOVLEN  = 16
+
+--
+-- Define constant based on rfc883, used by gethostbyxxxx() calls.
+--
+global constant MAXGETHOSTSTRUCT      =  1024 --changed to global by patrat 19/feb/2001
+
+--
+-- Define flags to be used with the WSAAsyncSelect() call.
+--
+global constant FD_READ     =  #01
+global constant FD_WRITE    =  #02
+global constant FD_OOB      =  #04
+global constant FD_ACCEPT   =  #08
+global constant FD_CONNECT  =  #10
+global constant FD_CLOSE    =  #20
+global constant SD_READ     =  0
+global constant SD_SEND     =  1
+global constant SD_BOTH     =  2
+--
+-- All Windows Sockets error constants are biased by WSABASEERR from
+-- the "normal"
+--
+global constant WSABASEERR     = 10000
+
+--
+-- Windows Sockets definitions of regular Microsoft C error constants
+--
+global constant WSAEINTR       = (WSABASEERR+4)
+global constant WSAEBADF       = (WSABASEERR+9)
+global constant WSAEACCES      = (WSABASEERR+13)
+global constant WSAEFAULT      = (WSABASEERR+14)
+global constant WSAEINVAL      = (WSABASEERR+22)
+global constant WSAEMFILE      = (WSABASEERR+24)
+
+--
+-- Windows Sockets definitions of regular Berkeley error constants
+--
+global constant WSAEWOULDBLOCK  =        (WSABASEERR+35)
+global constant WSAEINPROGRESS  =        (WSABASEERR+36)
+global constant WSAEALREADY     =        (WSABASEERR+37)
+global constant WSAENOTSOCK     =        (WSABASEERR+38)
+global constant WSAEDESTADDRREQ =        (WSABASEERR+39)
+global constant WSAEMSGSIZE     =        (WSABASEERR+40)
+global constant WSAEPROTOTYPE   =        (WSABASEERR+41)
+global constant WSAENOPROTOOPT  =        (WSABASEERR+42)
+global constant WSAEPROTONOSUPPORT  =    (WSABASEERR+43)
+global constant WSAESOCKTNOSUPPORT  =    (WSABASEERR+44)
+global constant WSAEOPNOTSUPP       =    (WSABASEERR+45)
+global constant WSAEPFNOSUPPORT     =    (WSABASEERR+46)
+global constant WSAEAFNOSUPPORT     =    (WSABASEERR+47)
+global constant WSAEADDRINUSE       =    (WSABASEERR+48)
+global constant WSAEADDRNOTAVAIL    =    (WSABASEERR+49)
+global constant WSAENETDOWN         =    (WSABASEERR+50)
+global constant WSAENETUNREACH      =    (WSABASEERR+51)
+global constant WSAENETRESET        =    (WSABASEERR+52)
+global constant WSAECONNABORTED     =    (WSABASEERR+53)
+global constant WSAECONNRESET       =    (WSABASEERR+54)
+global constant WSAENOBUFS          =    (WSABASEERR+55)
+global constant WSAEISCONN          =    (WSABASEERR+56)
+global constant WSAENOTCONN         =    (WSABASEERR+57)
+global constant WSAESHUTDOWN        =    (WSABASEERR+58)
+global constant WSAETOOMANYREFS     =    (WSABASEERR+59)
+global constant WSAETIMEDOUT        =    (WSABASEERR+60)
+global constant WSAECONNREFUSED     =    (WSABASEERR+61)
+global constant WSAELOOP            =    (WSABASEERR+62)
+global constant WSAENAMETOOLONG     =    (WSABASEERR+63)
+global constant WSAEHOSTDOWN        =    (WSABASEERR+64)
+global constant WSAEHOSTUNREACH     =    (WSABASEERR+65)
+global constant WSAENOTEMPTY        =    (WSABASEERR+66)
+global constant WSAEPROCLIM         =    (WSABASEERR+67)
+global constant WSAEUSERS           =    (WSABASEERR+68)
+global constant WSAEDQUOT           =    (WSABASEERR+69)
+global constant WSAESTALE           =    (WSABASEERR+70)
+global constant WSAEREMOTE          =    (WSABASEERR+71)
+                             
+--
+-- Extended Windows Sockets error constant definitions
+--
+global constant WSASYSNOTREADY      =    (WSABASEERR+91)
+global constant WSAVERNOTSUPPORTED  =    (WSABASEERR+92)
+global constant WSANOTINITIALISED   =    (WSABASEERR+93)
+                             
+--
+-- Error return codes from gethostbyname() and gethostbyaddr()
+-- (when using the resolver). Note that these errors are
+-- retrieved via WSAGetLastError() and must therefore follow
+-- the rules for avoiding clashes with error numbers from
+-- specific implementations or language run-time systems.
+-- For this reason the codes are based at WSABASEERR+1001.
+-- Note also that [WSA]NO_ADDRESS is defined only for
+-- compatibility purposes.
+--
+
+-- Authoritative Answer: Host not found
+global constant WSAHOST_NOT_FOUND   =    (WSABASEERR+1001)
+global constant HOST_NOT_FOUND      =    WSAHOST_NOT_FOUND
+
+-- Non-Authoritative: Host not found, or SERVERFAIL
+global constant WSATRY_AGAIN        =    (WSABASEERR+1002)
+global constant TRY_AGAIN           =    WSATRY_AGAIN
+
+-- Non recoverable errors, FORMERR, REFUSED, NOTIMP
+global constant WSANO_RECOVERY      =    (WSABASEERR+1003)
+global constant NO_RECOVERY         =    WSANO_RECOVERY
+
+-- Valid name, no data record of requested type
+global constant WSANO_DATA          =    (WSABASEERR+1004)
+global constant NO_DATA             =    WSANO_DATA
+
+-- no address, look for MX record --
+global constant WSANO_ADDRESS       =     WSANO_DATA
+global constant NO_ADDRESS          =    WSANO_ADDRESS
+
+--
+-- Windows Sockets errors redefined as regular Berkeley error constants
+--
+global constant EWOULDBLOCK         =    WSAEWOULDBLOCK
+global constant EINPROGRESS         =    WSAEINPROGRESS
+global constant EALREADY            =    WSAEALREADY
+global constant ENOTSOCK            =    WSAENOTSOCK
+global constant EDESTADDRREQ        =    WSAEDESTADDRREQ
+global constant EMSGSIZE            =    WSAEMSGSIZE
+global constant EPROTOTYPE          =    WSAEPROTOTYPE
+global constant ENOPROTOOPT         =    WSAENOPROTOOPT
+global constant EPROTONOSUPPORT     =    WSAEPROTONOSUPPORT
+global constant ESOCKTNOSUPPORT     =    WSAESOCKTNOSUPPORT
+global constant EOPNOTSUPP          =    WSAEOPNOTSUPP
+global constant EPFNOSUPPORT        =    WSAEPFNOSUPPORT
+global constant EAFNOSUPPORT        =    WSAEAFNOSUPPORT
+global constant EADDRINUSE          =    WSAEADDRINUSE
+global constant EADDRNOTAVAIL       =    WSAEADDRNOTAVAIL
+global constant ENETDOWN            =    WSAENETDOWN
+global constant ENETUNREACH         =    WSAENETUNREACH
+global constant ENETRESET           =    WSAENETRESET
+global constant ECONNABORTED        =    WSAECONNABORTED
+global constant ECONNRESET          =    WSAECONNRESET
+global constant ENOBUFS             =    WSAENOBUFS
+global constant EISCONN             =    WSAEISCONN
+global constant ENOTCONN            =    WSAENOTCONN
+global constant ESHUTDOWN           =    WSAESHUTDOWN
+global constant ETOOMANYREFS        =    WSAETOOMANYREFS
+global constant ETIMEDOUT           =    WSAETIMEDOUT
+global constant ECONNREFUSED        =    WSAECONNREFUSED
+global constant ELOOP               =    WSAELOOP
+global constant ENAMETOOLONG        =    WSAENAMETOOLONG
+global constant EHOSTDOWN           =    WSAEHOSTDOWN
+global constant EHOSTUNREACH        =    WSAEHOSTUNREACH
+global constant ENOTEMPTY           =    WSAENOTEMPTY
+global constant EPROCLIM            =    WSAEPROCLIM
+global constant EUSERS              =    WSAEUSERS
+global constant EDQUOT              =    WSAEDQUOT
+global constant ESTALE              =    WSAESTALE
+global constant EREMOTE             =    WSAEREMOTE
+
+constant NumCodes            =    62
+
+
+--
+-- WinSock error descriptions
+--
+
+-- There are some error messages corresponding to later versions
+-- of the Winsock 1.1 specification. There are included here for future reference
+
+------------------------------------------------------------
+-- WsockErrorInit   Sets up the global sequence ErrorCodes
+------------------------------------------------------------
+global sequence ErrorCodes
+
+procedure WsockErrorInit()
+
+        ErrorCodes = {
+   {WSAEINTR,
+   "WSAEINTR: Interrupted function call"},
+   {WSAEBADF,
+   "WSAEBADF: Bad file number"},
+   {WSAEACCES,
+   "WSAEACCES: Permission denied"},
+   {WSAEFAULT,
+   "WSAEFAULT: Address fault"},
+   {WSAEINVAL,
+   "WSAEINVAL: Invalid argument"},
+   {WSAEMFILE,
+   "WSAEMFILE: Too many open files"},
+   {WSAEWOULDBLOCK,
+   "WSAEWOULDBLOCK: Resource temporarily unavailable (Would block)"},
+   {WSAEINPROGRESS,
+   "WSAEINPROGRESS: Operation now in progress"},
+   {WSAEALREADY,
+   "WSAEALREADY: Operation already in progress"},
+   {WSAENOTSOCK,
+   "WSAENOTSOCK: Socket operation on non-socket"},
+   {WSAEDESTADDRREQ,
+   "WSAEDESTADDRREQ: Destination address required"},
+   {WSAEMSGSIZE,
+   "WSAEMSGSIZE: Message too long"},
+   {WSAEPROTOTYPE,
+   "WSAEPROTOTYPE: Protocol wrong type for socket"},
+   {WSAENOPROTOOPT,
+   "WSAENOPROTOOPT: Bad protocol option"},
+   {WSAEPROTONOSUPPORT,
+   "WSAEPROTONOSUPPORT: Protocol not supported"},
+   {WSAESOCKTNOSUPPORT,
+   "WSAESOCKTNOSUPPORT: Socket type not supported"},
+   {WSAEOPNOTSUPP,
+   "WSAEOPNOTSUPP: Operation not supported"},
+   {WSAEPFNOSUPPORT,
+   "WSAEPFNOSUPPORT: Protocol family not supported"},
+   {WSAEAFNOSUPPORT,
+   "WSAEAFNOSUPPORT: Address family not supported by protocol family"},
+   {WSAEADDRINUSE,
+   "WSAEADDRINUSE: Address already in use"},
+   {WSAEADDRNOTAVAIL,
+   "WSAEADDRNOTAVAIL: Cannot assign requested address"},
+   {WSAENETDOWN,
+   "WSAENETDOWN: Network is down"},
+   {WSAENETUNREACH,
+   "WSAENETUNREACH: Network is unreachable"},
+   {WSAENETRESET,
+   "WSAENETRESET: Network dropped connection on reset"},
+   {WSAECONNABORTED,
+   "WSAECONNABORTED: Software caused connection abort"},
+   {WSAECONNRESET,
+   "WSAECONNRESET: Connection reset by peer"},
+   {WSAENOBUFS,
+   "WSAENOBUFS: No buffer space available"},
+   {WSAEISCONN,
+   "WSAEISCONN: Socket is already connected"},
+   {WSAENOTCONN,
+   "WSAENOTCONN: Socket is not connected"},
+   {WSAESHUTDOWN,
+   "WSAESHUTDOWN: Cannot send after socket shutdown"},
+   {WSAETOOMANYREFS,
+   "WSAETOOMANYREFS: Too many references"},
+   {WSAETIMEDOUT,
+   "WSAETIMEDOUT: Connection timed out"},
+   {WSAECONNREFUSED,
+   "WSAECONNREFUSED: Connection refused"},
+   {WSAELOOP,
+
+   "WSAELOOP: Loop"},
+   {WSAENAMETOOLONG,
+   "WSAENAMETOOLONG: Name too long"},
+   {WSAEHOSTDOWN,
+   "WSAEHOSTDOWN: Host is down"},
+   {WSAEHOSTUNREACH,
+   "WSAEHOSTUNREACH: No route to host"},
+   {WSAENOTEMPTY,
+   "WSAENOTEMPTY: Directory not empty"},
+   {WSAEPROCLIM,
+   "WSAEPROCLIM: Too many processes"},
+   {WSAEUSERS,
+   "WSAEUSERS: Too many users"},
+   {WSAEDQUOT,
+   "WSAEDQUOT: Disk quota"},
+   {WSAESTALE,
+   "WSAESTALE: Stale"},
+   {WSAEREMOTE,
+   "WSAEREMOTE: Remote"},
+   {WSASYSNOTREADY,
+   "SYSNOTREADY: Network subsystem is unavailable"},
+   {WSAVERNOTSUPPORTED,
+   "VERNOTSUPPORTED: WINSOCK.DLL version out of range"},
+   {WSANOTINITIALISED,
+   "NOTINITIALISED: Successful Startup() not yet performed"},
+-- {WSAEDISCON,
+-- "WSAEDISCON: Graceful shutdown in progress"},
+   {WSAHOST_NOT_FOUND,
+   "HOST_NOT_FOUND: Host not found"},
+   {WSATRY_AGAIN,
+   "TRY_AGAIN: Non-authoritative host not found"},
+   {WSANO_RECOVERY,
+   "NO_RECOVERY: Non-recoverable error"},
+   {WSANO_DATA,
+   "NO_DATA: Valid name, no data record of requested type"},
+-- {WSAENOMORE,
+-- "WSAENOMORE: "},
+-- {WSAECANCELLED,
+-- "WSAECANCELLED: Cancelled"},
+-- {WSAEINVALIDPROCTABLE,
+-- "WSAEINVALIDPROCTABLE: Invalid procedure table from service provider"},
+-- {WSAEINVALIDPROVIDER,
+-- "WSAEINVALIDPROVIDER: Invalid service provider version number"},
+-- {WSAEPROVIDERFAILEDINIT,
+-- "WSAEPROVIDERFAILEDINIT: Unable to initialize a service provider"},
+-- {WSASYSCALLFAILURE,
+-- "WSASYSCALLFAILURE: System call failure"},
+-- {WSASERVICE_NOT_FOUND,
+-- "WSASERVICE_NOT_FOUND: Service not found"},
+-- {WSATYPE_NOT_FOUND,
+-- "WSATYPE_NOT_FOUND: Type not found"},
+-- {WSA_E_NO_MORE,
+-- "WSA_E_NO_MORE: "},
+-- {WSA_E_CANCELLED,
+-- "WSA_E_CANCELLED: "},
+-- {WSAEREFUSED,
+-- "WSAEREFUSED: Refused"},
+   {-1,
+   "Unknown Error Code"}}
+end procedure
+
+
+--
+-- Socket function and procedures
+--
+
+    integer cWSAStartup,
+            cWSACleanup,
+            cInet_addr,
+            cWSAGetLastError,
+            cNtohl,
+            cNtohs,
+            cHtonl,
+            cHtons,
+            cGetHostByName,
+            cGetHostByAddr,
+            cGetHostName,
+            cCloseSocket,
+            cSocket,
+            cAccept,
+            cBind,
+            cListen,
+            cRecv,
+            cSend,
+
+-- Not implemented so far:
+
+            cConnect,
+            cIoctlsocket,
+            cGetpeername,
+            cGetsockname,
+            cGetsockopt,
+            cInet_ntoa,
+            cRecvfrom,
+            cSelect,
+            cSendto,
+            cSetsockop,
+            cShutdown,
+            cWSASetLastError,
+            cWSAIsBlocking,
+            cWSAUnhookBlockingHook,
+            cWSASetBlockingHook,
+            cWSACancelBlockingCall,
+            cWSACancelAsyncRequest,
+            cWSAAsyncSelect,
+            cWSAAsyncGetHostByName,
+            cWSAAsyncGetHostByAddr
+
+include dll.e
+include msgbox.e
+include win32lib.ew
+
+WSAData = allocate(512)
+WSServerNameOrAddress = allocate(128)
+
+--define struct prototypes
+constant 
+    sin_family = allot(Word),
+    sin_port   = allot(Word),
+    sin_addr    = allot(Lpsz),
+    sin_zero   = allot(8),
+    SIZE_OF_SOCKADDR = allotted_size(),
+    
+    in_addr   = allot(Lpsz),
+    SIZE_OF_INADDR = allotted_size(),
+    
+    h_name      = allot(Lpsz),
+    h_aliases   = allot(Lpsz),
+    h_addrtype  = allot(Word),
+    h_length    = allot(Word),
+    h_addr_list = allot(Lpsz),
+    SIZE_OF_HOSTENT = allotted_size()
+    
+
+SocketTrace = 0                         -- Default no tracing = 0
+
+-----------------------------------------------
+-- Say
+-----------------------------------------------
+
+global procedure Say(sequence s, sequence t)
+    integer response
+    response = message_box(s,t, MB_OK)
+end procedure
+
+
+-- Mod JCM July 26
+
+-----------------------------------------------
+-- WsockPuts("Text") Conditionally puts(1,...
+--     if sockettracing is active
+-----------------------------------------------
+procedure WsockPuts(sequence Message)
+
+       if SocketTrace = 1 then
+       puts(1,Message)
+       end if
+end procedure
+-- end mod
+
+-- Mod JCM 20th Aug
+-----------------------------------------------
+-- WsockTellError
+-----------------------------------------------
+
+global procedure WsockTellError(atom Code)
+   integer response, Idx
+
+   if Code = 0 then
+      Say("Okay","")
+   else
+   Idx = 1
+      while (Idx < 52) do
+         if Code = ErrorCodes[Idx][1] then
+            Say(ErrorCodes[Idx][2],sprintf("%d ",Code))
+            exit
+         end if
+         Idx = Idx + 1
+         if Idx = 52 then
+            Say("Unknown Error Code","")
+         end if
+      end while
+   end if
+end procedure
+-- end mod
+-- mod JCM July 13
+
+atom Winsock
+
+----------------------------------------------------
+-- Procedure WSockInit
+--     Initializes the environment, opens the .dll
+----------------------------------------------------
+global function WsockInit()
+
+        integer WsockReturn
+        atom version
+        sequence line, s, l1, l2, l3, l4, l5, l6, l7
+        object NextChar integer NextIndex
+        WsockErrorInit()
+        Winsock = open_dll("wsock32")
+        WsockReturn =0
+        if Winsock = NULL then
+                    Say("Dll not found: Wsock32.dll ","WINSOCK.EW")
+            WsockReturn = -1
+        end if
+
+
+-- Set up the calls to the .dll
+        cWSAStartup = define_c_func(Winsock,"WSAStartup",
+                {C_SHORT,C_POINTER},C_INT)
+
+
+-- Does a WSAStartup to init the stuff
+        StackData = {}
+        version = bytes_to_int({1,1,0,0}) -- request for specific version
+        WsockReturn = c_func(cWSAStartup, {version,WSAData})
+
+            l1 = sprintf("Winsock version requested:%d.",peek({WSAData,1}))
+            l1 = l1 & sprintf("%d",peek({WSAData+1,1}))
+            l2 = sprintf("Winsock highest version supported by this .dll: %d.",
+                                peek({WSAData+2,1}))
+            l2 = l2 & sprintf("%d",peek({WSAData+3,1}))
+
+        -- Prints the description
+            line={}
+            for i=4 to 256 do
+                NextChar =peek({WSAData+i,1})
+                if (NextChar[1] = 0) then
+                    l4 = sprintf("%s",{line})
+                    NextIndex = i+1
+                    exit
+                end if
+            line = line & NextChar
+            end for
+
+        -- Prints the status
+            line = {}
+            for i=261 to 389 do
+                NextChar =peek({WSAData+i,1})
+                if (NextChar[1] = 0) then
+                    l5 = sprintf("%s", {line})
+                    NextIndex = i+1
+                    exit
+                end if
+                line = line & NextChar
+            end for
+
+        -- Prints MaxSockets
+            s=peek({WSAData+390,2}) &0 &0
+            l6 = sprintf("Maximum number of sockets a process can handle: %d",
+              (bytes_to_int(s)))
+
+
+        -- Prints Maxdatagram
+            s=peek({WSAData+392,2})&0&0
+            l7 = sprintf("Size in Bytes of the largest datagram: %d",
+              (bytes_to_int(s)))
+
+        -- Store data in Stackdata
+
+        StackData = append(StackData, l1)
+        StackData = append(StackData, l2)
+        StackData = append(StackData, l4)
+        StackData = append(StackData, l5)
+        StackData = append(StackData, l6)
+        StackData = append(StackData, l7)
+        -- Print out the result
+        --if SocketTrace = 1 then
+        --   printf(1,"WSAStartup returned:%d\n",WsockReturn)
+        --   printf(1,"%s\n%s\n%s\n%s\n%s\n%s\n",{l1,l2,l4,l5,l6,l7})
+        --end if
+
+      -- Link all the library fuctions needed
+
+    cWSACleanup         = define_c_func(Winsock,"WSACleanup",{},C_INT)
+
+    cInet_addr         =  define_c_func(Winsock,"inet_addr",
+                                                {C_POINTER},C_LONG)
+
+    cWSAGetLastError   = define_c_func(Winsock,"WSAGetLastError",{}, C_INT)
+
+    cNtohl           = define_c_func(Winsock,"ntohl", {C_LONG}, C_LONG)
+
+    cNtohs           = define_c_func(Winsock,"ntohs", {C_SHORT}, C_SHORT)
+    cHtonl           = define_c_func(Winsock,"htonl", {C_LONG}, C_LONG)
+    cHtons           = define_c_func(Winsock,"htons", {C_SHORT}, C_SHORT)
+
+    cGetHostByName = define_c_func(Winsock,"gethostbyname",
+                                                {C_POINTER},C_POINTER)
+    
+    cGetHostByAddr = define_c_func(Winsock,"gethostbyaddr",
+                                                {C_POINTER, C_INT, C_INT},C_POINTER)
+
+    cGetHostName = define_c_func(Winsock, "gethostname", 
+                                                {C_POINTER,C_INT}, C_LONG)
+    
+    cSocket = define_c_func(Winsock, "socket",{C_INT,C_INT,C_INT},C_INT)
+        
+    cCloseSocket = define_c_proc(Winsock, "closesocket",{C_INT})
+        
+    cConnect = define_c_func(Winsock, "connect", {C_INT,C_POINTER,C_INT},C_INT)
+    cBind = define_c_func(Winsock, "bind", {C_INT,C_POINTER,C_INT},C_INT)
+    cListen = define_c_proc(Winsock, "listen", {C_INT,C_INT})
+    cAccept = define_c_func(Winsock, "accept", {C_INT, C_POINTER,C_INT},C_INT)
+    cRecv = define_c_func(Winsock, "recv", {C_INT, C_POINTER, C_INT, C_INT}, C_INT)
+    cSend = define_c_func(Winsock, "send", {C_INT, C_POINTER, C_INT, C_INT}, C_INT)
+    cWSAAsyncSelect = define_c_func(Winsock, "WSAAsyncSelect", 
+                                     {C_INT,C_LONG,C_INT,C_LONG}, C_INT)
+    cWSAAsyncGetHostByName = define_c_func(Winsock, "WSAAsyncGetHostByName", 
+                                     {C_INT, C_UINT, C_POINTER,C_POINTER,
+                                      C_INT},C_INT)
+    cWSAAsyncGetHostByAddr = define_c_func(Winsock, "WSAAsyncGetHostByAddr",
+                                     {C_INT, C_UINT, C_POINTER, C_INT, C_INT,
+                                      C_POINTER, C_INT},C_INT)
+    cIoctlsocket = define_c_func(Winsock, "Ioctlsocket", {C_INT, C_LONG,
+                                                          C_POINTER}, C_INT)
+    cGetpeername = define_c_func(Winsock, "getpeername",
+                                   {C_INT,C_POINTER,C_POINTER},C_INT)
+    cGetsockname = define_c_func(Winsock, "getsockname",
+                                                   {C_UINT,C_POINTER,C_INT},C_INT)
+    cGetsockopt = define_c_func(Winsock, "cGetsockopt",
+                                                        {C_INT,C_INT,C_INT,C_POINTER,C_POINTER},C_INT)
+    cInet_ntoa = define_c_func(Winsock, "inet_ntoa", {C_POINTER},C_POINTER)
+    cRecvfrom = define_c_func(Winsock, "Recvfrom",
+                            {C_INT,C_POINTER,C_INT,C_INT,C_POINTER},C_INT)
+    cSelect = define_c_func(Winsock, "Select",
+                      {C_INT,C_POINTER,C_POINTER,C_POINTER,C_POINTER},C_INT)
+    cSendto = define_c_func(Winsock, "Sendto",
+                        {C_INT,C_POINTER,C_INT,C_INT,C_POINTER,C_INT},C_INT)
+    cSetsockop = define_c_func(Winsock, "Setsockop",
+                                                        {C_INT,C_INT,C_INT,C_POINTER,C_INT},C_INT)
+    cShutdown = define_c_func(Winsock, "shutdown",
+                                                        {C_INT,C_INT},C_INT)
+    cWSASetLastError = define_c_proc(Winsock, "WSASetLastError",
+                                                        {C_INT})
+    cWSAIsBlocking = define_c_func(Winsock, "WSAIsBlocking",
+                                                        {},C_INT)
+    cWSAUnhookBlockingHook = define_c_func(Winsock, "WSAUnhookBlockingHook",
+                                                        {},C_INT)
+    cWSASetBlockingHook = define_c_func(Winsock, "WSASetBlockingHook",
+                                                        {C_POINTER},C_POINTER)
+    cWSACancelBlockingCall = define_c_func(Winsock, "WSACancelBlockingCall",
+                                                        {},C_INT)
+    cWSACancelAsyncRequest = define_c_func(Winsock, "WSACancelAsyncRequest",
+                                                        {C_LONG},C_INT)
+    return WsockReturn        
+      
+end function
+
+----------------------------------------------------------
+-- pokew
+----------------------------------------------------------
+global procedure pokew(atom addr,object w) -- poke word
+    if atom(w) then
+      poke(addr,{remainder(w,256),floor(w/256)})
+    else
+      for i = 1 to length(w) do
+        poke(addr+(i-1)*2,{remainder(w[i],256),floor(w[i]/256)})
+      end for
+    end if
+end procedure
+
+--------------------------------------------------------------
+-- peekw
+--------------------------------------------------------------
+global function peekw(object addr)
+sequence data
+    if atom(addr) then
+        return peek(addr)+peek(addr+1)*256
+    else
+      data = {}
+      for i = 1 to addr[2] do
+        data = data & peek(addr[1]+i-1)+peek(addr[1]+i-1)*256
+      end for
+      return data
+    end if
+end function
+
+--------------------------------------------------------------
+--  WsockRelease
+--------------------------------------------------------------
+
+global function WsockRelease()
+    integer WsockReturn 
+    WsockReturn = c_func(cWSACleanup, {})
+    --if SocketTrace != 0 then
+    --   printf(1,"WSACleanup returned: %d\n",WsockReturn)
+    --end if
+    return WsockReturn
+end function
+
+--------------------------------------------------------------
+--  WSAGetLastError
+--------------------------------------------------------------
+global function WSAGetLastError()
+    return c_func(cWSAGetLastError,{})
+end function
+
+--------------------------------------------------------------
+--  WsockGetHostName()
+--
+--  Returns the local host name. Returns {} if hostname cannot
+--  be resolved
+------------------------------------------------------------
+global function WsockGetHostName()
+    atom loc
+    integer len
+    sequence temp
+    temp = repeat(0,256)
+    loc = allocate_string(temp)
+    if loc = 0 then
+        return {}
+    end if
+    len = 256
+    if c_func(cGetHostName,{loc,len}) = SOCKET_ERROR then
+        Say("Windows Socket Error" & sprintf("%d", WSAGetLastError()),
+            "Winsock Error")
+        return {}
+    end if
+    temp = peek_string(loc)
+    free(loc)
+    return temp
+end function
+
+--------------------------------------------------------------
+--WsockGetIP
+--
+--  Returns the IP address of a hostname, returns {} on fail.
+--  If hostname = "", returns the local machine IP
+--------------------------------------------------------------
+global function WsockGetIP(sequence hname)
+    atom loc, sa 
+    integer len
+    sequence temp, ip
+    if length(hname) = 0 then
+        hname = WsockGetHostName()
+        if length(hname) = 0 then
+            return {}
+        end if
+    end if
+    loc = allocate_string(hname)
+    if loc = 0 then
+        return {}
+    end if
+    sa = c_func(cGetHostByName, {loc})
+    if sa = 0 then
+       Say("Cannot resolve " & hname & "IP address","Winsock Error")
+       free(loc)
+       return {}
+    end if
+    
+    free(loc)
+    
+    len = fetch(sa, h_length)
+    temp = peek({peek4u(peek4u(sa+12)),len})
+
+    --commented out by patrat, this is an internal winsock buffer so we shouldn't be freeing it
+    --free(sa)
+    
+    ip = {}
+    for x = 1 to length(temp) do
+        ip=ip & sprintf("%d",temp[x]) & "."    
+    end for
+    ip = ip[1..length(ip)-1]
+
+    return ip
+end function
+
+--------------------------------------------------------------
+-- WsockHostInfo
+--
+--      Returns a sequence containing {HostName, IPAddress}
+--      given a symbolic or ip address
+--      Returns an error if the host is unknown
+--
+--------------------------------------------------------------
+
+global function WsockHostInfo(sequence HostNameOrAddress)
+
+    atom InetAddress, tmp
+    atom HostId, HostAddr, pHostName, ptr
+    sequence HostDescription, HostName, Info, temp, IPAddress
+    atom phostent                           -- points to hostent struct
+
+    phostent = allocate_struct(SIZE_OF_HOSTENT)
+    InetAddress = allocate(SIZE_OF_INADDR)
+        
+    if length(HostNameOrAddress) = 0 then
+        temp = WsockGetHostName()
+        HostId = allocate_string(temp)
+        tmp = INADDR_NONE
+    else
+        HostId = allocate_string(HostNameOrAddress)     
+        tmp = c_func(cInet_addr, {HostId})
+    end if
+        
+    if tmp = INADDR_NONE then  -- assume name
+        phostent = c_func(cGetHostByName, {HostId})
+    else
+        poke4(InetAddress,tmp)
+        phostent = c_func(cGetHostByAddr,{InetAddress,4,AF_INET})
+    end if
+        
+    if phostent = 0 then
+        free(HostId)
+        free(InetAddress)
+        return {{},{}} --return empty {} for error
+    end if
+       
+    HostName = fetch(phostent, h_name)
+    
+    -- if tracing, then prints the hostent structure
+    --WsockPuts(sprintf("h_name is at address: %x\n",peek4u(phostent)))
+    --WsockPuts(sprintf("  h_name: %s\n",{HostName}))
+    --WsockPuts(sprintf("h_aliases array is at address: %x\n",peek4u(peek4u(phostent+4))))
+    --WsockPuts(sprintf("h_addrtype is: %x \n", fetch(phostent, h_addrtype)))        
+    --WsockPuts(sprintf("h_length is: %x \n", fetch(phostent, h_length)))
+    --WsockPuts(sprintf("h_addr_list array pointer is at address: %x \n",peek4u(peek4u(phostent+12))))
+    IPAddress = WsockGetIP(HostName)
+    --WsockPuts(sprintf("IP address is: %s \n",IPAddress))
+    free(HostId)
+    --free(phostent) patrat 19/feb 2001
+    free(InetAddress)
+    return {HostName,IPAddress}
+end function
+
+--------------------------------------------------------------
+-- WsockCloseSocket
+--------------------------------------------------------------
+global procedure WsockCloseSocket(integer nsocket)
+    c_proc(cCloseSocket, {nsocket})
+end procedure
+
+-------------------------------------------------------------
+-- WsockSocket
+-------------------------------------------------------------
+
+global function WsockSocket(integer family, integer stype)
+    return c_func(cSocket, {family,stype,0})
+end function
+
+--------------------------------------------------------------
+-- Ntohs
+--------------------------------------------------------------
+global function Ntohs(integer number)
+    --Convert Net Byte Order to Host Byte Order short integer (16 bits)
+    --and_bits is neccessary because c_func return garbage in the upper
+    --16 bits for some strange reason. Should be fixed in the next release
+    --of Euphoria
+    integer x
+    x = c_func(cNtohs, {number})
+    return and_bits(x,#FFFF)
+end function
+
+---------------------------------------------------------------
+-- Htons
+---------------------------------------------------------------
+global function Htons(integer number)
+    --Convert Host Byte Order to Net Byte Order short integer (16 bits)
+    --and_bits is neccessary because c_func returns garbage in the upper
+    --16 bits for some strange reason. Should be fixed in the next release
+    --of Euphoria
+    integer x
+    x = c_func(cHtons, {number})
+    return and_bits(x,#FFFF)
+end function
+
+------------------------------------------------------
+-- WsockCallSocket
+------------------------------------------------------
+global function WsockCallSocket(sequence HostNameOrAddress, integer portnum)
+    integer sock, family, tracestatus, port
+    atom sa, phostent, InetAddress, addr_ptr, HostId 
+    sequence temp, ip
+    trace(1)
+    --tracestatus = SocketTrace
+    
+    --SocketTrace = 0 --turn it off for now
+    temp = WsockHostInfo(HostNameOrAddress)
+    --SocketTrace = tracestatus --restore SocketTrace
+
+    if length(temp[2]) = 0 then
+       return SOCKET_ERROR
+    end if
+
+    HostId = allocate_string(temp[2])
+
+    if HostId = 0 then
+        return SOCKET_ERROR
+    end if
+
+    addr_ptr = c_func(cInet_addr, {HostId})
+
+    if addr_ptr = 0 then      -- not a valid ip address
+        free(HostId)
+        return SOCKET_ERROR
+    end if
+
+    free(HostId)
+
+    InetAddress = allocate(4)
+
+    if InetAddress = 0 then
+        return SOCKET_ERROR
+    end if
+
+    poke4(InetAddress,addr_ptr)
+
+    --phostent = c_func(cGetHostByAddr,{InetAddress,4,AF_INET})
+
+    --if phostent = 0 then
+    --     free(InetAddress)
+    --     return SOCKET_ERROR --return -1 for error
+    --end if
+
+    free(InetAddress)
+
+    sa = allocate_struct(SIZE_OF_SOCKADDR)
+
+    if sa = 0 then
+        return SOCKET_ERROR
+    end if
+    
+    --set the family
+    --Patrat 19/feb 2001
+    --store(sa, sin_family, fetch(phostent, h_addrtype))
+    -- Changed by PATRAT, i think mixing the different memory alloc routines is causing problems
+    --store(sa, sin_family, AF_INET)
+    poke(sa,{peek(phostent+8),0})
+    
+    --set the portnum
+    -- Changed by PATRAT, i think mixing the different memory alloc routines is causing problems
+    --store(sa, sin_port, Htons(portnum))
+    poke4(sa+2,Htons(portnum))
+
+  
+    --set the address
+    -- Changed by PATRAT, i think mixing the different memory alloc routines is causing problems
+    --store(sa, sin_addr, addr_ptr)
+    poke4(sa+4,addr_ptr)
+    
+    --if SocketTrace !=0 then
+    --    ip = peek({sa+4, fetch(phostent, h_length)})
+    --    family = fetch(sa, sin_family)
+    --    port   = Ntohs(fetch(sa, sin_port))
+    --    printf(1, "Socket family is %d\n",family)
+    --    printf(1, "IP is %d.%d.%d.%d\n",{ip[1],ip[2],ip[3],ip[4]}) 
+    --    printf(1, "Host port is %d\n", port)
+    --end if
+    
+    --free(phostent) --patrat 19/feb 2001
+    
+    sock = c_func(cSocket,{AF_INET,SOCK_STREAM,0})
+    if sock = SOCKET_ERROR then
+        --WsockPuts("Couldn't get socket!\n")
+        free(sa)
+        return SOCKET_ERROR 
+    end if
+    
+    if c_func(cConnect, {sock, sa, SIZE_OF_SOCKADDR}) = SOCKET_ERROR then
+        --WsockPuts(sprintf("Could not connect on port %d\n", portnum))
+        c_proc(cCloseSocket,{sock})
+        free(sa)
+        return SOCKET_ERROR
+    end if    
+    free(sa)
+    return sock
+end function
+
+--------------------------------------------------
+-- WsockListenSocket
+--------------------------------------------------
+
+global function WsockListenSocket(integer portnum)
+    integer sock, len, family, port
+    atom sa, phostent, InetAddress, addr_ptr, HostId
+    sequence HostIP, temp, ip
+    
+    HostIP = WsockGetIP("")
+    if length(HostIP) = 0 then
+        return SOCKET_ERROR
+    end if
+
+    HostId = allocate_string(HostIP)
+    if HostId = 0 then
+        return SOCKET_ERROR
+    end if
+
+    addr_ptr = c_func(cInet_addr, {HostId})
+
+    if addr_ptr = 0 then      -- not a valid ip address
+      free(HostId)
+      return SOCKET_ERROR
+    end if
+
+    free(HostId)
+
+    InetAddress = allocate(4)
+
+    if InetAddress = 0 then
+      return SOCKET_ERROR
+    end if
+
+    poke4(InetAddress,addr_ptr)
+    phostent = c_func(cGetHostByAddr,{InetAddress,4,AF_INET})
+
+    if phostent = 0 then
+       free(InetAddress)
+       return SOCKET_ERROR --return -1 for error
+    end if
+
+    free(InetAddress)
+    
+    sa = allocate_struct(SIZE_OF_SOCKADDR)
+    
+    if sa = 0 then
+       return SOCKET_ERROR
+    end if
+    
+    --Set the family
+    store(sa, sin_family, fetch(phostent, h_addrtype))
+    
+    --set the portnum
+    store(sa, sin_port, Htons(portnum))
+    
+    --family = bytes_to_int(peek({sa,2}) & {0,0})
+    family = fetch(sa, sin_family)
+
+    -- set the address
+    store(sa, sin_addr, addr_ptr)
+    
+    --if SocketTrace !=0 then
+    --    ip = peek({sa+4, 4})
+        --family = bytes_to_int(peek({sa,2}) & {0,0})
+    --    family = fetch(sa, sin_family)
+        --port = bytes_to_int(peek({sa+2,2}) & {0,0})
+    --    port = Ntohs(fetch(sa, sin_port))
+    --    printf(1, "Socket family is %d\n",family)
+    --    printf(1, "IP is %d.%d.%d.%d\n",{ip[1],ip[2],ip[3],ip[4]}) 
+    --    printf(1, "Host port is %d\n", port)
+    --end if
+    --END MOD
+
+    sock = c_func(cSocket,{family,SOCK_STREAM,0})
+    if sock = SOCKET_ERROR then
+        --WsockPuts("Couldn't get socket!\n")
+        free(sa)
+        return SOCKET_ERROR 
+    end if
+    
+    if c_func(cBind, {sock, sa, SIZE_OF_SOCKADDR}) = SOCKET_ERROR then
+        --WsockPuts(sprintf("Could not bind socket %d\n", sock))
+        c_proc(cCloseSocket,{sock})
+        free(sa)
+        return SOCKET_ERROR
+    end if    
+    free(sa)
+    c_proc(cListen, {sock,3})
+    return sock
+end function
+
+-------------------------------------------------------------
+-- Accept
+-------------------------------------------------------------
+global function WsockAccept(integer socket)
+    return c_func(cAccept, {socket, NULL, NULL})
+end function
+
+-------------------------------------------------------------
+-- WsockReadData
+--
+--  Reads data sent over a socket. Return a 1-D sequence 
+--  containing the data or SOCKET_ERROR on error. 
+-------------------------------------------------------------
+global function WsockReadData(integer socket, integer bytestoread)
+       
+    atom buffer, buffer_ptr
+    integer bcount, bread
+    sequence temp
+
+    if bytestoread <= 0 then
+       return SOCKET_ERROR --nothing to recv 
+    end if
+    
+    bcount = 0
+    bread = 0
+    temp = {}
+    
+    buffer = allocate(bytestoread)
+    
+    if buffer = 0 then
+        return SOCKET_ERROR
+    end if
+    mem_set(buffer,0,bytestoread)
+    
+    buffer_ptr = buffer
+    
+    while bcount <= bytestoread do
+      bread=c_func(cRecv, {socket, buffer_ptr, bytestoread-bcount,0})
+      if bread <= 0 or WSAGetLastError() = WSAEWOULDBLOCK then
+        exit
+      end if
+      bcount = bcount + bread
+      buffer_ptr = buffer_ptr + bread    
+    end while
+    
+    if buffer_ptr > buffer then  --make sure we have something to pass back
+        -- Changed by PatRat, this used to use peek_string which meant it was useless for binary data...
+        temp = peek({buffer,bcount})
+    else
+         free(buffer)
+         return SOCKET_ERROR
+    end if
+    free(buffer)
+    return temp
+end function
+
+-------------------------------------------------------------
+-- WsockSendData
+--
+-- Sends Data over a socket. Data must be a 1-D sequence. 
+-- Returns bytes sent or SOCKET_ERROR on fail.
+-------------------------------------------------------------
+
+global function WsockSendData(integer socket, sequence data)
+    atom buffer, buffer_ptr
+    integer bcount, bsend, bytestosend
+    
+    if length(data) = 0 then
+       return SOCKET_ERROR --nothing to send
+    end if
+    
+    bcount = 0
+    bsend = 0
+    
+    buffer = allocate_string(data)
+    if buffer = 0 then
+        return SOCKET_ERROR
+    end if
+    
+    bytestosend = length(data)
+    
+    buffer_ptr = buffer
+    
+    while bcount < bytestosend do
+      bsend=c_func(cSend, {socket, buffer_ptr, bytestosend-bcount,0})
+      
+      if bsend = 0 or WSAGetLastError() = WSAEWOULDBLOCK then  
+         --socket was fubared so exit the loop.
+         exit 
+      elsif bsend < 0 then --socket was fubared really bad. Bail with Error.
+        free(buffer)
+        return SOCKET_ERROR
+      end if
+      
+      bcount = bcount + bsend
+      buffer_ptr = buffer_ptr + bsend    
+    
+    end while
+    free(buffer)
+    return bcount
+end function
+
+----------------------------------------------------------------------------
+-- WSAAsyncSelect()
+--
+-- Return 0 on success or SOCKET_ERROR on fail
+----------------------------------------------------------------------------
+
+global function WSAAsyncSelect(integer s, atom hwnd, atom Msg, atom events)
+    return c_func(cWSAAsyncSelect, {s,hwnd,Msg,events})
+end function
+
+----------------------------------------------------------------------------
+-- WSAAsyncGetHostByName()
+--
+-- Return 0 on success or SOCKET_ERROR on fail
+----------------------------------------------------------------------------
+global function WSAAsyncGetHostByName(atom hwnd, integer Message, sequence name, atom buffer, integer len)
+    atom name_addr, temp
+    name_addr = allocate_string(name)
+    temp = c_func(cWSAAsyncGetHostByName, {hwnd, Message, name_addr, buffer, len})
+    free(name_addr)
+    return temp
+end function
+
+----------------------------------------------------------------------------
+-- WsockConnectAsync()
+--
+-- Return 0 on success or SOCKET_ERROR on fail
+----------------------------------------------------------------------------
+global function WsockConnectAsync(integer sock, integer port, atom hostpointer) 
+    --to be used with AsyncSockets
+    atom sa, addr, ippoke
+    sequence temp,ip
+    
+    sa = allocate_struct(SIZE_OF_SOCKADDR)
+    if sa = 0 then
+        return SOCKET_ERROR
+    end if
+    
+    --trace(1)
+    --set the family
+    mem_copy(sa, hostpointer+8, 2)
+    
+    --set the port
+    --store(sa, sin_port, Htons(port))
+    -- Changed by PATRAT, i think mixing the different memory alloc routines is causing problems
+    poke4(sa+2,Htons(port))
+    
+    --Set the address
+    temp = peek({peek4u(peek4u(hostpointer+12)),4})
+    
+    ip = {}
+    for x = 1 to length(temp) do
+        ip=ip & sprintf("%d",temp[x]) & "."    
+    end for
+    ip = ip[1..length(ip)-1]
+    
+    ippoke = allocate_string(ip)
+    addr = c_func(cInet_addr,{ippoke})
+    
+    if addr = 0 then
+        free(ippoke)
+        free(sa)
+        return SOCKET_ERROR
+    end if
+    
+    free(ippoke)    
+    
+    -- Changed by PATRAT, i think mixing the different memory alloc routines is causing problems
+    poke4(sa+4,addr)
+    --store(sa, sin_addr, addr)
+ 
+    if c_func(cConnect, {sock, sa, SIZE_OF_SOCKADDR}) = SOCKET_ERROR then
+        if WSAGetLastError() != WSAEWOULDBLOCK then
+            WsockTellError(WSAGetLastError())
+            --if SocketTrace !=0 then
+            --    printf(1, "Could not connect on port %d\n", port) 
+            --end if
+            c_proc(cCloseSocket,{sock})
+            free(sa)
+            return SOCKET_ERROR
+        end if
+    end if    
+    free(sa)
+    return 1
+end function 
+
+--End Mod
+
+global function WsockGetSockName(integer sock)
+    --I really hate Windows Structs!! GH
+    --You have to really jump through hoops for this..
+    
+    atom sa, ippoint, len , rtn 
+    sequence ip
+    
+    sa = allocate_struct(SIZE_OF_SOCKADDR)
+    if sa = 0 then
+       return {} 
+    end if
+    len = allocate(4)
+    if len = 0 then
+       free(sa)
+       return {} 
+    end if
+    
+    ippoint = allocate(4)
+    if ippoint = 0 then
+        free(len)
+        free(sa)
+        return {}    
+    end if
+    
+    -- Changed by PATRAT, i think mixing the different memory alloc routines is causing problems
+    poke4(sa+4, ippoint)
+    --store(sa, sin_addr, ippoint)
+    
+    poke4(len, SIZE_OF_SOCKADDR)
+    
+    rtn = c_func(cGetpeername, {sock, sa, len})
+    
+    if rtn !=0 then
+       free(sa)
+       free(len)
+       free(ippoint)
+       return {}
+    end if
+    
+   rtn = c_func(cInet_ntoa,{peek4u(sa+4)})
+    
+    if rtn = NULL then
+       return {} 
+    end if
+    
+    ip =  peek_string(rtn)
+    
+    free(sa)
+    free(len)
+    free(ippoint)
+    free(rtn)
+    
+    return ip
+end function
+
+global function WsockListenAsync(integer portnum, atom hwnd, atom Msg,atom events)
+    
+    --to be used with Async Sockets
+    integer sock, family, port, errorRtn
+    atom sa, phostent, InetAddress, addr_ptr, HostId
+    sequence ip
+    
+    ip = WsockGetIP("")
+    if length(ip) = 0 then
+        return SOCKET_ERROR
+    end if
+
+    HostId = allocate_string(ip)
+    if HostId = 0 then
+        return SOCKET_ERROR
+    end if
+
+    addr_ptr = c_func(cInet_addr, {HostId})
+
+    if addr_ptr = 0 then      -- not a valid ip address
+        free(HostId)
+        return SOCKET_ERROR
+    end if
+
+    free(HostId)
+
+    InetAddress = allocate(4)
+
+    if InetAddress = 0 then
+        return SOCKET_ERROR
+    end if
+
+    poke4(InetAddress,addr_ptr)
+    phostent = c_func(cGetHostByAddr,{InetAddress,4,AF_INET})
+
+    if phostent = 0 then
+        free(InetAddress)
+        return SOCKET_ERROR --return -1 for error
+    end if
+
+    free(InetAddress)
+    
+    sa = allocate_struct(SIZE_OF_SOCKADDR)
+    
+    if sa = 0 then
+        return SOCKET_ERROR
+    end if
+    
+    --Set the family
+    store(sa, sin_family, fetch(phostent, h_addrtype))
+    
+    --free(phostent) --patrat 19/feb 2001
+    
+    --set the portnum
+    store(sa, sin_port, Htons(portnum))
+    
+    --get the family 
+    family = fetch(sa, sin_family)
+
+    -- set the address
+    store(sa, sin_addr, addr_ptr)
+    
+    --if SocketTrace !=0 then
+    --    ip = peek({sa+4, 4})
+    --    family = fetch(sa, sin_family)
+    --    port = Ntohs(fetch(sa, sin_port))
+    --    printf(1, "Socket family is %d\n",family)
+    --    printf(1, "IP is %d.%d.%d.%d\n",{ip[1],ip[2],ip[3],ip[4]}) 
+    --    printf(1, "Host port is %d\n", port)
+    --end if
+
+    sock = c_func(cSocket,{family,SOCK_STREAM,0})
+    if sock = SOCKET_ERROR then
+        --WsockPuts("Couldn't get socket!\n")
+        free(sa)
+        return SOCKET_ERROR 
+    end if
+    
+    errorRtn = WSAAsyncSelect(sock, hwnd, Msg, events)
+    
+    if c_func(cBind, {sock, sa, SIZE_OF_SOCKADDR}) = SOCKET_ERROR then
+        --WsockPuts(sprintf("Could not bind socket %d\n", sock))
+        c_proc(cCloseSocket,{sock})
+        free(sa)
+        return SOCKET_ERROR
+    end if    
+    free(sa)
+    c_proc(cListen, {sock,3})
+    return sock
+end function
+
+
+global function WsockShutdown(integer socket, integer how)
+    return c_func(cShutdown, {socket, how})
+end function
+
+global function IsIP(sequence data)
+atom HostId
+atom temp
+
+    HostId = allocate_string(data)     
+    if HostId = 0 then
+        return SOCKET_ERROR
+    else
+        temp = c_func(cInet_addr, {HostId})
+    end if
+    free(HostId)
+    if temp = INADDR_NONE then
+        return 0
+    else
+        return 1
+    end if
+end function
+
+global function WSAAsyncGetHostByAddress(atom hwnd, integer Message, sequence ip, 
+                                         atom buffer, integer len)
+    atom ip_addr, temp, InetAddress, tmp
+    integer nbol
+
+    ip_addr = allocate_string(ip)
+    if ip_addr = 0 then
+        return SOCKET_ERROR
+    end if
+
+    tmp = c_func(cInet_addr, {ip_addr})
+    
+    if tmp = INADDR_NONE then
+        free(ip_addr)
+        return SOCKET_ERROR
+    end if
+    
+    free(ip_addr) 
+    
+    InetAddress = allocate(SIZE_OF_INADDR)
+    if InetAddress = 0 then
+       return SOCKET_ERROR
+    end if
+ 
+    poke4(InetAddress, tmp)
+    temp = c_func(cWSAAsyncGetHostByAddr, {hwnd, Message, InetAddress, 4, AF_INET, buffer, len})
+    free(InetAddress)
+    return temp
+end function

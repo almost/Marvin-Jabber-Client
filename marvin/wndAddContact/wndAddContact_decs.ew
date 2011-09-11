@@ -1,0 +1,55 @@
+-- wndAddContact window declarations
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--Declare controls
+--Generated in part with Judith's Enhanced Win32lib IDE, thanks :)
+global constant wndAddContact = create( Window, "Add Contact", 0, Default, Default, 351, 299, {WS_DLGFRAME, WS_SYSMENU} )
+global constant wndaddcontact_cmdClose = create( PushButton, "Close", wndAddContact, 260, 240, 75, 25, 0 )
+global constant wndaddcontact_cmdAdd = create( PushButton, "Add", wndAddContact, 172, 240, 75, 25, 0 )
+global constant wndaddcontact_Instruct1 = create( LText, "You can add other Instant Messaging services from gateway setup.", wndAddContact, 4, 4, 344, 20, 0 )
+global constant wndaddcontact_Service = create( Combo, "Jabber", wndAddContact, 4, 52, 336, 20*6, CBS_DROPDOWNLIST )
+global constant wndaddcontact_Instruct2 = create( LText, "Instant Messaging Service:", wndAddContact, 4, 32, 336, 20, 0 )
+global constant wndaddcontact_Instruct3 = create( LText, "Enter ID:", wndAddContact, 4, 84, 336, 20, 0 )
+global constant wndaddcontact_ID = create( EditText, "", wndAddContact, 4, 104, 336, 20, 0 )
+global constant wndaddcontact_Instruct4 = create( LText, "Nickname (display name):", wndAddContact, 4, 136, 336, 20, 0 )
+global constant wndaddcontact_Nickname = create( EditText, "", wndAddContact, 4, 156, 336, 20, 0 )
+global constant wndaddcontact_Instruct416 = create( LText, "Nickname (display name):16", wndAddContact, 4, 192, 336, 20, 0 )
+global constant wndaddcontact_Instruct5 = create( LText, "Group:", wndAddContact, 4, 188, 336, 20, 0 )
+global constant wndaddcontact_Group = create( Combo, "Contacts", wndAddContact, 4, 208, 336, 20*6, 0 )
+
+
+global atom wndaddcontact_private_RidPopulateCombos
+
+global procedure wndaddcontact_Open()
+    openWindow(wndAddContact,Normal)
+    setText(wndaddcontact_ID,"")
+    setText(wndaddcontact_Nickname,"")
+    call_proc(wndaddcontact_private_RidPopulateCombos,{})
+end procedure
+
+global procedure wndaddcontact_Close()
+    closeWindow(wndAddContact)
+end procedure

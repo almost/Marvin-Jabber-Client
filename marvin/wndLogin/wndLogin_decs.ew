@@ -1,0 +1,57 @@
+--wndlogin window declarations
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+include ctlrichedit\ctlrichedit_decs.ew
+include ctltoggle\ctltoggle_decs.ew
+
+include ctlrichedit\ctlrichedit_defs.ew
+include ctltoggle\ctltoggle_defs.ew
+
+--Declare controls
+global constant wndLogin              = skinx_CreateWindow("login","Login",Default,Default,-1,-1),
+                wndlogin_Username     = ctlrichedit_Create(wndLogin,"username",0,0),
+                wndlogin_Password     = ctlrichedit_Create(wndLogin,"password",0,0),
+                wndlogin_Server       = ctlrichedit_Create(wndLogin,"server",0,0),
+                wndlogin_Resource     = ctlrichedit_Create(wndLogin,"resource",0,0),
+                wndlogin_SavePassword =   ctltoggle_Create(wndLogin,"savepassword",{"unchecked","checked"}),
+                wndlogin_AutoLogin    =   ctltoggle_Create(wndLogin,"autologin",{"unchecked","checked"}),
+                wndlogin_NewAcount    =   ctltoggle_Create(wndLogin,"newacount",{"unchecked","checked"})
+                
+ctlrichedit_SetHideChars(wndlogin_Password,1)
+if setTabEnabled(ctlrichedit_Win32LibID(wndlogin_Username),1) then end if
+if setTabEnabled(ctlrichedit_Win32LibID(wndlogin_Password),1) then end if
+if setTabEnabled(ctlrichedit_Win32LibID(wndlogin_Server),1) then end if
+if setTabEnabled(ctlrichedit_Win32LibID(wndlogin_Resource),1) then end if
+
+skinx_ChangeEventHandler(wndLogin,routine_id("events_SkinxEventHandler"))
+
+global constant wndlogin_mnuMenu      = create(Menu,"Menu",wndLogin,0,0,0,0,0), 
+                wndlogin_mnuConnect            = create(MenuItem,"Connect",wndlogin_mnuMenu,0,0,0,0,0),
+                wndlogin_mnuSavePassword       = create(MenuItem,"Save Password",wndlogin_mnuMenu,0,0,0,0,0),
+                wndlogin_mnuAutoLogin          = create(MenuItem,"Login Automatically",wndlogin_mnuMenu,0,0,0,0,0),
+                wndlogin_mnuNewAcount          = create(MenuItem,"New Account",wndlogin_mnuMenu,0,0,0,0,0)
+                
+               

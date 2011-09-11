@@ -1,0 +1,75 @@
+-- wndRenameContact window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+--This window is not skinable
+
+sequence JID
+
+procedure PopulateCombos()
+    sequence list
+    
+    eraseItems(wndrenamecontact_Group)
+    list = jabber_rosterEnumGroups()
+    for i = 1 to length(list) do
+        if length(list[i]) > 0 then
+            addItem(wndrenamecontact_Group,list[i])
+        end if
+    end for
+end procedure
+
+global procedure wndrenamecontact_Open(sequence jid)
+    sequence group
+    JID = jid
+    
+    openWindow(wndRenameContact,Normal)
+    
+    PopulateCombos()
+    setText(wndrenamecontact_Nickname,jabber_rosterGetNick(JID))
+    group = jabber_rosterGetGroups(JID)
+    if length(group) then
+        setText(wndrenamecontact_Group,group[1])
+    else
+        setText(wndrenamecontact_Group,"")
+    end if
+    
+    setText(wndRenameContact,jabber_rosterGetNick(JID)&" ("& JID & ")")
+end procedure
+
+global procedure wndrenamecontact_Close()
+    closeWindow(wndRenameContact)
+end procedure
+
+procedure onClick_Ok()
+    jabber_rosterSetNick(JID,getText(wndrenamecontact_Nickname))
+    if length(getText(wndrenamecontact_Group)) > 0 then
+        jabber_rosterSetGroups(JID,{getText(wndrenamecontact_Group)})
+    else
+        jabber_rosterSetGroups(JID,{})
+    end if
+    wndrenamecontact_Close()
+end procedure
+
+onClick[wndrenamecontact_Ok] = routine_id("onClick_Ok")
+onClick[wndrenamecontact_Cancel] = routine_id("wndrenamecontact_Close")

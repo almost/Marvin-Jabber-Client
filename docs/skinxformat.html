@@ -1,0 +1,556 @@
+<html>
+<head><title>SkinX XML Skin Format</title>
+<script>
+	var sectioncount = 0;
+	var partcount = 0;
+	function pheading(name) {
+		sectioncount = 0;
+		document.write ("<h1>" + ++partcount + " " + name + "</h1>");
+	}
+	function sheading(name) {
+		document.write ("<a name='" + name + "' /><h2>" + partcount + "." + ++sectioncount + " " + name + "</h2>");
+	}
+
+	//"link,display" or "linkdisplay"
+	function ref(name) {
+		var name_array=name.split(",");
+
+		if (name_array.length > 1) {
+		document.write ("<a href='#" + name_array[0] + "'>" + name_array[1] + "</a>")
+		} else {
+		document.write ("<a href='#" + name + "'>" + name + "</a>")
+		}
+	}
+</script>
+</head>
+
+<body>
+<!--
+Revision List Starting: 4/July/2001
+1/December/2001: <state> tag
+3/January/2001: Text section added to overview to explain text variables
+18/April/2002: Removed <title> tag
+-->
+
+
+<center><h1>SkinX XML Skin Format</h1></center>
+
+<script>pheading("Overview");</script>
+
+<script>sheading("Introduction");</script>
+SkinX is a library for making very flexible skinnable applications. It uses an <script>ref("XML");</script> format to define skins. This document tries to be generally about the skin format and not about any particular Application.
+<hr/>
+
+
+<script>sheading("XML");</script>
+<p>
+This section is a quick introduction to XML, I'll assume you are already familiar with HTML so I'll just concentrate on the differences. In HTML you have a specific set of tags to define the structure of a document such as &lt;h1&gt; and &lt;center&gt; which always have the same meaning but a tag like &lt;area&gt; would be meaningless. XML allows you to use any tag, XML is in fact really a meta-language for describing markup languages. There is no pre-defined tag set so any sort of data can be represented by XML.
+</p><p>
+There are a few other practical differences between HTML and XML, XML is a lot stricter then HTML so while an HTML document can be written to be a valid XML document not all HTML documents are entirely valid. Firstly, XML is case sensitive, that means that &lt;center&gt; is <i>not</i> equivalent to &lt;CENTER&gt; or &lt;Center&gt;. Next, XML elements must either have a start tag and an end tag or the start tag must include a / character just before the &gt;, so while &lt;br&gt; is valid in HTML it would have to be &lt;br/&gt; or &lt;br&gt;&lt;/br&gt; in XML. Also, an XML document must have one top-level element (such as HTML's &lt;html&gt; tag).</p>
+<hr/>
+
+
+<script>sheading("Images");</script>
+<p>
+Image files should be in either GIF (Graphic Interchange Format) or BMP (Windows Bitmap) format. If you want to specify transparent regions in an <script>ref("image");</script> then set those regions to rgb(255,0,255) (that is red: 355 blue: 0 and green 255, a particularly vile shade of pink), you will also need to set the <b>transparent</b> attribute of the <script>ref("area");</script> you use the image in to "true" if you want the <script>ref("image");</script> to appear with those portions transparent.
+</p>
+<hr/>
+
+
+<script>sheading("Basic Structure");</script>
+<p>
+The top level element of a SkinX skin is <script>ref("skin");</script>, the top level element should contain an <script>ref("about");</script> element (optional) and a number of <script>ref("menu");</script> and <script>ref("window");</script> elements. A <script>ref("window");</script> element contains other elements describing the look of a specific window.</p>
+<p><code>
+&lt;<script>ref("skin");</script> name="<i>skinname</i>"&gt;<br/>
+&lt;<script>ref("about");</script>&gt;<br/>
+...meta info about the skin...<br/>
+&lt;/<script>ref("about");</script>&gt;<br/>
+
+&lt;<script>ref("menu");</script> name="<i>menu name</i>"&gt;<br/>
+...<script>ref("menuitem");</script> elements...<br/>
+&lt;/<script>ref("menu");</script>&gt;<br/>
+...more <script>ref("menu");</script> elements...<br/>
+
+&lt;<script>ref("window");</script> name="<i>windowname</i>"&gt;<br/>
+...info about a window...<br/>
+&lt;/<script>ref("window");</script>&gt;<br/>
+...more <script>ref("window");</script> elements...<br/>
+&lt;/<script>ref("skin");</script>&gt;<br/>
+</code></p>
+
+<hr/>
+<script>sheading("Areas");</script>
+<p>
+An <script>ref("area");</script> is the basic element used to specify how the window looks and acts. A <script>ref("area");</script> element has a number of attributes that specify things such as a background image, and what to do when the user clicks on the area.<br/>
+There should be only one <script>ref("area");</script> in a <script>ref("window");</script> element, but that <script>ref("area");</script> can contain as many <script>ref("area");</script>s as you want, as can any of those <script>ref("area");</script>s.<br/>
+The top level <script>ref("area");</script> element for a window should almost always look like this:</p>
+<p>
+<code>
+&lt;<script>ref("area");</script> name="toplevel" top="T0" left="L0" right="R0" bottom="B0"&gt;</br>
+...<script>ref("area");</script> elements...<br/>
+&lt;/area&gt;<br/>
+<br/>
+NOTE: The name attribute is not needed.
+</code>
+</p><p>
+All positional attributes are given relative to an <script>ref("area");</script>'s parent using (see <script>ref("Coordinates");</script>).
+</p>
+<p><script>ref("area");</script>'s can optionally be given a name using the <b>name</b> attribute, the Application can identify <script>ref("area");</script>'s by they're names. The Application will define certain names that can used for <script>ref("area");</script>'s, area's with these names will then be used for certain purposes.</p>
+<hr/>
+<script>sheading("Text");</script>
+<p>
+An <script>ref("area");</script> can contain text in its <b>text</b> attribute (there are also other attributes that can contain font, font size and allignment options for the text). The application may define variables which you can use in the <b>text</b> attribute of <script>ref("area");</script>s (either all areas or only areas in a specified window). Variables are named in the form $<i>variablename</i>$, to use one just include it in the <b>text</b> attribute of an <script>ref("area");</script>. If you want to include the dollar symbol ("$") in the text of an area use 2 dollar symbols instead of one, it will show up as one, for example: "$$10" will show up as $10.</br>
+<hr/>
+<script>sheading("States");</script>
+<p>
+A <script>ref("state");</script> tag can be used inside an area to define alternative named image attributes for the area. States that can be used inside an area will be defined by the Application, if a state is not supplied then the <script>ref("area");</script>'s normal image attributes will be used instead.<br/>
+<hr/>
+<script>sheading("Coordinates");</script>
+<p>The simplest way to specify a position a letter specifying which edge to measure from followed by the number of pixels, for example:
+<p><code>
+left="L100"
+</code></p>
+<p>means the <script>ref("area");</script>'s left edge is 100 pixels from the left edge of the <script>ref("area");</script>'s parent. Alternatively:</p>
+<p><code>
+left="R100"
+</code></p>
+<p>would mean that the <script>ref("area");</script>'s left edge is 100 pixels from the <i>right</i> edge of the <script>ref("area");</script>'s parent. For vertical positions the letters T and B are used (meaning TOP and BOTTOM respectively)</p>
+<p>When <b>width</b> and <b>height</b> attributes are used just a pixel value is fine such as:</p>
+<p><code>
+width="100"
+</code></p>
+<p>You can specify a percentage of the total width or height of the <script>ref("area");</script>'s parent with a number between 0 and 100 followed by a % character:</p>
+<p><code>
+width="50%"
+</code></p>
+<p>You can also use + (plus), - (minus), * (multiply) and / (divide), so you could use:</p>
+<p><code>
+left="L50%-16"
+</code></p>
+<p>Would be 16 pixels less than 50% of the total width</p>
+<p>Of course you might think, why not just specify absolute pixel positions? The reason is that windows need to be resizable so absolute pixel positions become meaningless in a lot of places</p>
+<hr/>
+<script>sheading("Messages");</script>
+<p>
+A message is string that is sent to the Application when certain events occur (such as the user clicking on an <script>ref("area");</script>), the messages will be defined by the Application but the skin sets where and when they can be triggered.
+</p><p>
+Examples of where messages can be specified in a skin are the <b>onleftclick</b> and <b>onrightclick</b> attributes of the <script>ref("area");</script> element and the <b>onselect</b> attribute of the <script>ref("menuitem");</script> element.
+</p>
+<hr/>
+
+<script>sheading("Resources");</script>
+<p>
+A <script>ref("resource");</script> element specifies an image file and gives it a name, the Application will define certain <script>ref("resource");</script> names it will use for images used in certain parts of the Application. <script>ref("resource");</script>'s can be nested so that to define <i>scrollbar/thumb</i> you'd write:</p>
+<p><code>
+&lt;<script>ref("resource");</script> name="scrollbar"&gt;<br/>
+&lt;<script>ref("resource");</script> name="thumb" image="thumb.gif"/&gt;<br/>
+&lt;/<script>ref("resource");</script>&gt;<br/>
+</code></p>
+<hr/>
+
+
+<script>sheading("Menus");</script>
+<p>
+<script>ref("Menu");</script>'s can be defined using a <script>ref("menu");</script> element containing <script>ref("menuitem");</script> elements. <script>ref("Menu");</script>s are identified by they're <b>name</b> attribute, to use an <script>ref("menu");</script> you must specify it's name in the <b>leftmenu</b> or <b>rightmenu</b> attribute of an <script>ref("area");</script> element.
+</p>
+<p>
+Example:
+</p>
+<p><code>
+&lt;<script>ref("menu");</script> name="menu1"&gt;<br/>
+&lt;<script>ref("menuitem");</script> name="item1" caption="Item Number One!" onselect="item1"/&gt;<br/>
+&lt;<script>ref("menuitem");</script> name="item2" caption="Item Number Two!" onselect="item1"/&gt;<br/>
+&lt;<script>ref("menuitem");</script> name="item3" caption="Item Number Three!" onselect="item3"/&gt;<br/>
+&lt;/<script>ref("menu");</script>&gt;<br/>
+</code></p>
+<p>
+The above snippet (which should be placed after the <script>ref("about");</script> element in the <script>ref("skin");</script> element) defines a menu named "menu1" which has three items. If the menu is shown and the user selects an item it's <b>onselect</b> message will be sent to the Application. It could be used in an <script>ref("area");</script> like this:
+</p>
+<p><code>
+&lt;<script>ref("area");</script> name="menuarea" top="T0" left="L4" width="32" height="8" leftmenu="menu1" image="menu1.gif"/&gt;</br>
+</code></p>
+<hr/>
+
+
+<script>sheading("Panes");</script>
+<p>
+A set of Panes are two adjacent <script>ref("area");</script>s which can be resized by the user by dragging a third area (contained within one of those two areas). Those two <script>ref("area");</script>s are contained by a parent <script>ref("area");</script>, these three <script>ref("area");</script>s make a up a set of panes.
+</p>
+<p>
+All 3 <script>ref("area");</script>s that make up a set up panes have they're <b>type</b> attribute set to: "pane". The <b>subtype</b> of the parent area should be set to "parent". The parent area should contain two <script>ref("area");</script>s whose <b>subtype</b>s are "right" and "left" or "top" and "bottom". One of those two <script>ref("area");</script>s should contain a third area whose <b>subtype</b> attribute should be: "drag", this third <script>ref("area");</script> should also have it's <b>target</b> attribute set to the name of the parent <script>ref("area");</script>.<br/>
+NOTE: the two <script>ref("area");</script>s contained by the parent are an exception to the rule that all area's must have 4 positional attributes.
+</p>
+<p>
+An example of a horizontally split pane is:
+</p>
+<p><code>
+&lt;<script>ref("area");</script> name="pane1" type="pane" subtype="parent" top="T0" left="L0" right="R0" height="B0"&gt;<br/>
+&lt;<script>ref("area");</script> name="pane1top" type="pane" subtype="top"&gt;<br/>
+...contents of top pane...<br/>
+&lt;<script>ref("area");</script> name="pane1drag" type="pane" subtype="drag" target="pane1" top="B5" left="L0" height="5" width="100%" color="#000000"/&gt;<br/>
+&lt;/<script>ref("area");</script>&gt;<br/>
+&lt;<script>ref("area");</script> name="pane1bottom" type="pane" subtype="bottom"&gt;<br/>
+...contents of bottom pane...<br/>
+&lt;/<script>ref("area");</script>&gt;<br/>
+&lt;/<script>ref("area");</script>&gt;<br/>
+</code></p>
+<hr/>
+
+
+<script>pheading("Reference");</script>
+<script>sheading("skin");</script>
+<code>
+&lt;skin name="<i>skinname</i>"&gt;<br/>
+..skin..<br/>
+&lt;/skin&gt;<br/>
+</code>
+
+<p>
+The <script>ref("skin");</script> element is the top-level element of a SkinX skin.
+</p>
+
+<p>
+<b>Can Contain:</b>
+<script>ref("about");</script> <script>ref("resource");</script> <script>ref("menu");</script> <script>ref("window");</script>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<i>(top level)</i>
+</p>
+
+<hr/>
+
+
+<script>sheading("about");</script>
+<code>
+&lt;about&gt;<br/>
+&lt;displayname&gt;<i>name to display to users</i>&lt;/displayname&gt;<br/>
+&lt;descr&gt;<i>description of skin</i>&lt;/descr&gt;<br/>
+&lt;author&gt;<i>author of skin</i>&lt;/author&gt;<br/>
+&lt;email&gt;<i>email address of author</i>&lt;/email&gt;<br/>
+&lt;web&gt;<i>authors homepage</i>&lt;/web&gt;<br/>
+&lt;/about&gt;<br/>
+</code>
+
+<p>
+The <script>ref("about");</script> element contains meta information about the skin, it and all it's child elements are entirely optional. There should be a maximum of one <script>ref("about");</script> element.
+</p>
+
+<p>
+<b>Can Contain:</b>
+displayname descr author email web
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("skin");</script>
+</p>
+
+<hr/>
+
+
+<script>sheading("resource");</script>
+<code>
+&lt;resource name="<i>resource name</i>" image="<i>filename</i>"/&gt;<br/>
+<br/>
+<b>or</b></br>
+</br>
+&lt;resource name="<i>resource name</i>"&gt;<br/>
+...other resource elements...<br/>
+&lt;/resource&gt;<br/>
+</code>
+
+<p>
+A resource is a named image that will be used by the application. With nested resources the child resources will be identified using "/" characters so in the following example "scrollbar/thumb" will equal "thumb.gif":</br></br>
+<code>
+&lt;resource name="scrollbar"&gt;<br/>
+&lt;resource name="thumb" image="thumb.gif"/&gt;<br/>
+&lt;/resource&gt;<br/>
+</code>
+</p>
+
+<p>
+<b>Can Contain:</b>
+<script>ref("resource");</script>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("skin");</script> <script>ref("resource");</script>
+</p>
+
+<hr/>
+
+
+<script>sheading("menu");</script>
+<code>
+&lt;menu name="<i>menu name</i>"&gt;<br/>
+...<script>ref("menuitem");</script> elements...<br/>
+&lt;/menu&gt;<br/>
+</code>
+
+<p>
+This element defines a menu. A menu is made up of one or more <script>ref("menuitem");</script> elements enclosed in a <script>ref("menu");</script> element. A menu may later be used in an <script>ref("area");</script> element.
+</p>
+
+<p>
+<b>Can Contain:</b>
+<script>ref("menuitem");</script>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("skin");</script>
+</p>
+
+<hr/>
+
+
+<script>sheading("menuitem");</script>
+<code>
+&lt;menuitem name="<i>menuitem name</i>" caption="<i>caption</i>" onselect="<i>message</i>"/&gt;<br/>
+<br/>
+<b>or</b></br>
+</br>
+&lt;menuitem name="<i>menuitem name</i>" caption="<i>caption</i>"&gt;<br/>
+...<script>ref("menuitem");</script> elements...<br/>
+&lt;/menuitem&gt;<br/>
+</code>
+
+<p>
+A <script>ref("menuitem");</script> element defines an item on a menu. The caption is the text the user sees. The onselect property defines the message that will be sent to the application if the user selects this item on the menu. If more <script>ref("menuitem");</script> elements are placed within a <script>ref("menuitem");</script> element as child nodes then they will become a submenu.
+</p>
+
+<p>
+<b>Can Contain:</b>
+<script>ref("menuitem");</script>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("menu");</script> <script>ref("menuitem");</script>
+</p>
+
+<hr/>
+
+
+<script>sheading("window");</script>
+<code>
+&lt;window name="<i>menuitem name</i>"&gt;<br/>
+&lt;<script>ref("bounds");</script> minwidth="<i>minimum width</i>" maxwidth="<i>maximum width</i>" minheight="<i>minimum height</i>" maxheight="<i>maximum height</i>"/&gt;<br/>
+&lt;<script>ref("area");</script> name="toplevel" top="T0" left="L0" right="R0" bottom="B0"&gt;</br>
+...<script>ref("area");</script> elements...<br/>
+&lt;/area&gt;<br/>
+&lt;/window&gt;<br/>
+</code>
+
+<p>
+A <script>ref("window");</script> element defines a how a window should look. The application will identify a window by it's name. A window contains one top level <script>ref("area");</script> element but that top level <script>ref("area");</script> can contain any amount of child <script>ref("area");</script> elements...
+</p>
+
+<p>
+<b>Can Contain:</b>
+title icon <script>ref("bounds");</script> <script>ref("area");</script>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("skin");</script>
+</p>
+
+<hr/>
+
+
+<script>sheading("bounds");</script>
+<code>
+&lt;bounds minwidth="<i>minimum width</i>" maxwidth="<i>maximum width</i>" minheight="<i>minimum height</i>" maxheight="<i>maximum height</i>"/&gt;<br/>
+</code>
+
+<p>
+Specifies the minimum and maximum dimensions for a window (in pixels).
+</p>
+
+<p>
+<b>Can Contain:</b>
+<i>(none)</i>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("window");</script>
+</p>
+
+<hr/>
+
+
+<script>sheading("area");</script>
+<code>
+&lt;area name="<i>area name</i>" top="<i>top of area</i>" left="<i>left of area</i>" right="<i>right of area</i>" bottom="<i>bottom of area</i>" type="<i>type</i>" subtype="<i>subtype</i>" color="<i>hex color value</i>" image="<i>filename</i>" hoverimage="<i>filename</i>" downimage="<i>filename</i>" focusimage="<i>filename</i>" transparent="true" texthalign="<i>left|center|right</i>" textvalign="<i>top|middle|bottom</i>" textfont="<i>font name</i>" textsize="<i>point size</i>" textcolor="<i>hex color value</i>" text="<i>default text</i>" leftmenu="<i>menu name</i>" rightmenu="<i>menu name</i>" onleftclick="<i>message</i>" onrightclick="<i>message</i>"&gt;</br>
+...<script>ref("area");</script> and/or <script>ref("cutout");</script> elements...<br/>
+&lt;/area&gt;<br/>
+<br/>
+NOTE: width and height may be used instead of right and bottom<br/>
+</code>
+
+<p>
+An <script>ref("area");</script> element defines a area on a window. An area can have visual attributes such as a image or a color (or even some text), it can also have attributes that define behaviour such as what happens when the user clicks within the area. The application will define names to be used for certain areas (such as "state" for an area whose text will be changed to reflect the state) for each window as well defining messages that the can be used in that window (in the onleftclick, onrightclick attributes).<br/>
+Most of the attributes are optional, the only exception to this is the that an area must have 4 positional attributes (top and left, bottom or height and right or width).<br/>
+There follows a list of each attribute with a brief description:</br>
+<table border="1">
+<tr><td><b><i>Attribute</i></b></td><td><b><i>Description</i></b></td></tr>
+<tr><td><b>name</b></td><td><i>Optional:</i> Identifies the area, the application will define names to be used for certain areas (such as "state" for an area whose text will be changed to reflect the state)</td></tr>
+
+<tr><td><b>top</b></td><td><i>Required:</i> Indicates the position of the top edge of the area, see <script>ref("Coordinates");</script></td></tr>
+
+<tr><td><b>left</b></td><td><i>Required:</i> Indicates the position of the left edge of the area, see <script>ref("Coordinates");</script></td></tr>
+
+<tr><td><b>right </b><i>or</i><b> width</b></td><td><i>Required:</i> Indicates the position of the right edge of the area, see <script>ref("Coordinates");</script>. Or could be the width of the area as an absolute pixel value (without any modifiers) or a percentage of the total width of the parent area (by appending a % to the value).</td></tr>
+
+<tr><td><b>bottom </b><i>or</i><b> height</b></td><td><i>Required:</i> Indicates the position of the bottom edge of the area, see <script>ref("Coordinates");</script>. Or could be the height of the area as an absolute pixel value (without any modifiers) or a percentage of the total height of the parent area (by appending a % to the value).</td></tr>
+
+<tr><td><b>type</b></td><td><i>Optional:</i> A string indicating that this area is of a certain type (leaving out the type attribute indicates that it is a normal area). If a type is specified a subtype can also be specified (see below). Valid values for type are shown below along with valid values for subtype (indented):<br/>
+<table border="1" width="100%">
+<tr><td width="25%"><b><i>type</i></b></td><td width="75%"><b><i>Description</i></b></td></tr>
+<tr><td>border<br/>
+&nbsp;&nbsp;&nbsp;top<br/>
+&nbsp;&nbsp;&nbsp;bottom<br/>
+&nbsp;&nbsp;&nbsp;left<br/>
+&nbsp;&nbsp;&nbsp;right
+</td><td>Indicates this area is a border that can be used to resize the window. If you don't want the window to be sizeable then don't specify any border areas.</td></tr>
+<tr><td>client</td><td>Indicates that this is the client area of the window. The client area is the area which contains all the areas which are not borders or title bars. Is not currently used but may be used in the future</td></tr>
+<tr><td>close</td><td>Indicates that the this is a close button, the window will be closed when this area is clicked by the user.</td></tr>
+<tr><td>corner<br/>
+&nbsp;&nbsp;&nbsp;topleft<br/>
+&nbsp;&nbsp;&nbsp;topright<br/>
+&nbsp;&nbsp;&nbsp;bottomleft<br/>
+&nbsp;&nbsp;&nbsp;bottomright
+</td><td>Indicates that this is a corner that can be used to resize the window. If you don't want the window to be sizeable then don't specify any corner areas.</td></tr>
+<tr><td>drag</td><td>Indicates that this area can be used to move the window.</td></tr>
+<tr><td>min</td><td>Indicates that this area can be used to minimize the window</td></tr>
+<tr><td>pane<br/>
+&nbsp;&nbsp;&nbsp;drag<br/>
+&nbsp;&nbsp;&nbsp;parent<br/>
+&nbsp;&nbsp;&nbsp;top<br/>
+&nbsp;&nbsp;&nbsp;bottom<br/>
+&nbsp;&nbsp;&nbsp;left<br/>
+&nbsp;&nbsp;&nbsp;right
+</td><td>Indicates that this area is part of a <script>ref("panes,pane");</script></td></tr>
+</table>
+
+</td></tr>
+
+<tr><td><b>subtype</b></td><td><i>Optional:</i> See above</td></tr>
+
+<tr><td><b>color</b></td><td><i>Optional:</i> A background color for the area, in #rrggbb format (so #000000 is black and #FFFFFF is black). If neither a color nor an <script>ref("image");</script> is provided the area is entirely transparent.</td></tr>
+
+<tr><td><b>image</b></td><td><i>Optional:</i> A background <script>ref("image");</script> for the area (a filename). The <script>ref("image");</script> can be in either gif or bmp format (jpg will probably be added at some time). If the image is smaller than the area it will be tiled. If neither a color nor an image is provided the area is entirely transparent.</td></tr>
+
+<tr><td><b>hoverimage</b></td><td><i>Optional:</i> An <script>ref("image");</script> to display when the mouse hovers over the area. If no <script>ref("image");</script> is specified then the normal <script>ref("image");</script> will be used.</td></tr>
+
+<tr><td><b>downimage</b></td><td><i>Optional:</i> An <script>ref("image");</script> to display when the left mouse button is held down over the area. If no <script>ref("image");</script> is specified then the normal <script>ref("image");</script> will be used.</td></tr>
+
+<tr><td><b>focusimage</b></td><td><i>Optional:</i> An <script>ref("image");</script> to display when the window has focus. If no <script>ref("image");</script> is specified then the normal <script>ref("image");</script> will be used.</td></tr>
+
+<tr><td><b>target</b></td><td><i>Optional:</i> If the <b>type</b> of the <script>ref("area");</script> is <i>pane</i> and the subtype is <i>drag</i> then this should be set to the name of the <script>ref("panes,pane");</script>'s parent <script>ref("area");</script>.</td></tr>
+
+<tr><td><b>transparent</b></td><td><i>Optional:</i> Set this attribute to "true" if any of the <script>ref("image");</script>s used in this <script>ref("area");</script> contain transparent portions.</td></tr>
+
+<tr><td><b>texthalign</b></td><td><i>Optional:</i> Horizontal alignment for text contained by the area. Can be <b>left</b>, <b>right</b> or <b>center</b> (default)</td></tr>
+
+<tr><td><b>textvalign</b></td><td><i>Optional:</i> Vertical alignment for text contained by the area. Can be <b>top</b>, <b>bottom</b> or <b>middle</b> (default)</td></tr>
+
+<tr><td><b>textfont</b></td><td><i>Optional:</i> Font for text contained by the area ("Arial" for example)</td></tr>
+
+<tr><td><b>textsize</b></td><td><i>Optional:</i> Point size for text contained by the area</td></tr>
+
+<tr><td><b>textcolor</b></td><td><i>Optional:</i> Color for text contained by area, in #rrggbb format</td></tr>
+
+<tr><td><b>text</b></td><td><i>Optional:</i> Default text for the area (can be changed by the application at run time)</td></tr>
+
+<tr><td><b>leftmenu</b></td><td><i>Optional:</i> Name of menu to pop up when the area is clicked with the left mouse button. Must be defined elsewhere using a <script>ref("menu");</script> element</td></tr>
+
+<tr><td><b>rightmenu</b></td><td><i>Optional:</i> Name of menu to pop up when the area is clicked with the right mouse button. Must be defined elsewhere using a <script>ref("menu");</script> element</td></tr>
+
+<tr><td><b>onleftclick</b></td><td><i>Optional:</i> A message to send to the application when the user left clicks on the <script>ref("area");</script>.</td></tr>
+
+<tr><td><b>onrightclick</b></td><td><i>Optional:</i> A message to send to the application when the user right clicks on the <script>ref("area");</script>.</td></tr>
+
+<tr><td><b>hint</b></td><td><i>Optional:</i> A tooltip hint that will be displayed when the user hovers over this <script>ref("area");</script>.</td></tr>
+</table>
+</p>
+
+<p>
+<b>Can Contain:</b>
+<script>ref("area");</script> <script>ref("cutout");</script>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("window");</script> <script>ref("area");</script>
+</p>
+
+<hr/>
+
+<script>sheading("state");</script>
+<code>
+&lt;state name="<i>state name</i>" image="<i>filename</i>" hoverimage="<i>filename</i>" downimage="<i>filename</i>" focusimage="<i>filename</i>" transparent="true"/&gt;</br>
+</code>
+
+<p>
+A <script>ref("state");</script> element defines alternative image attributes for an <script>ref("area");</script>. The application will define which <script>ref("state");</script> tag's should be provided in a given <script>ref("area");</script>.</br>
+There follows a list of each attribute with a brief description:</br>
+<table border="1">
+<tr><td><b><i>Attribute</i></b></td><td><b><i>Description</i></b></td></tr>
+<tr><td><b>name</b></td><td><i>Required:</i> Identifies the state, the application will define names to be used.</td></tr>
+
+<tr><td><b>image</b></td><td><i>Optional:</i> A background <script>ref("image");</script> for the area (a filename). The <script>ref("image");</script> can be in either gif or bmp format (jpg will probably be added at some time). If the image is smaller than the area it will be tiled. If neither a color nor an image is provided the area is entirely transparent.</td></tr>
+
+<tr><td><b>hoverimage</b></td><td><i>Optional:</i> An <script>ref("image");</script> to display when the mouse hovers over the area. If no <script>ref("image");</script> is specified then the normal <script>ref("image");</script> will be used.</td></tr>
+
+<tr><td><b>downimage</b></td><td><i>Optional:</i> An <script>ref("image");</script> to display when the left mouse button is held down over the area. If no <script>ref("image");</script> is specified then the normal <script>ref("image");</script> will be used.</td></tr>
+
+<tr><td><b>focusimage</b></td><td><i>Optional:</i> An <script>ref("image");</script> to display when the window has focus. If no <script>ref("image");</script> is specified then the normal <script>ref("image");</script> will be used.</td></tr>
+
+<tr><td><b>transparent</b></td><td><i>Optional:</i> Set this attribute to "true" if any of the <script>ref("image");</script>s used in this <script>ref("state");</script> contain transparent portions.</td></tr>
+</table>
+</p>
+
+<p>
+<b>Can Contain:</b>
+<i>(none)</i>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("area");</script>
+</p>
+
+<hr/>
+
+<script>sheading("cutout");</script>
+<code>
+&lt;cutout type="<i>shape</i>"&gt;<i>...points...</i>&lt;cutout<br/>
+</code>
+
+<p>
+A <script>ref("cutout");</script> element defines a region of the window that should be made transparent (so that other windows or the desktop can be seen through the hole), this allows windows to made in shapes other than the standard rectangle. The <b>type</b> attribute can either be <b>polygon</b> or <b>elliptic</b>. <br/>
+Points are a series of coordinates in the form <i>x,y</i> separated by spaces given relative to the parent area (see <script>ref("Coordinates");</script>). A polygon can have any amount of points and an elliptic should have 2 points (top left and bottom right of the rectangular area to place the ellipse in).
+</p>
+
+<p>
+<b>Can Contain:</b>
+<i>(none)</i>
+</p>
+
+<p>
+<b>Can Be Contained By:</b>
+<script>ref("area");</script>
+</p>
+
+<hr/>
+
+
+</body>
+
+</html>

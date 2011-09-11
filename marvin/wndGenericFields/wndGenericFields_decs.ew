@@ -1,0 +1,33 @@
+-- wndGenericFields window declarations
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include proplist.ew
+
+--Declare controls.
+global constant wndGenericFields = create( Window, "Generic Fields", 0, Default, Default, 270, 202, {WS_DLGFRAME} )
+global constant wndgenericfields_Label = create( CText, "Label", wndGenericFields, 0, 4, 270, 16, 0 )
+global constant wndgenericfields_Fields = createPropList( wndGenericFields, 5, 24, 260, 100 )
+global constant wndgenericfields_cmdOK = create( PushButton, "OK", wndGenericFields, 74, 136, 90, 30, 0 )
+global constant wndgenericfields_cmdCancel = create( PushButton, "Cancel", wndGenericFields, 170, 136, 90, 30, 0 )

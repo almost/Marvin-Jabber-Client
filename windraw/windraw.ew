@@ -1,0 +1,363 @@
+--windraw.ew
+--extra window graphics functions
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--There where some problems so i had to remove some optomizations, they should really be added back :)
+
+constant MSIMG32 = open_dll("msimg32.dll")
+atom funcTransparentBlt
+funcTransparentBlt = -1
+if MSIMG32 != 0 then
+    --funcTransparentBlt = define_c_func(MSIMG32,"TransparentBlt",{C_POINTER,C_INT,C_INT,C_INT,C_INT,C_POINTER,C_INT,C_INT,C_INT,C_INT,C_UINT},C_ULONG)
+end if
+
+--Based on transBlt from win32lib
+procedure AlternateTransBitBlt( atom dest, integer destX, integer destY, 
+            atom src, integer srcX, integer srcY, 
+            integer wide, integer high)
+    --integer
+    --wide,           -- width of the source bitmap
+    --high            -- height of the source bitmap
+
+    atom                    
+    srcBmp,         -- source bitmap
+    destDC,         -- device context of destination
+    srcDC,          -- source bitmap (color)
+    saveDC,         -- backup copy of source bitmap
+    maskDC,         -- mask bitmap (monochrome)
+    invDC,          -- inverse of mask bitmap (monochrome)
+    resultDC,       -- combination of source bitmap & background
+    hResultBmp,     -- Bitmap combination of source & background
+    hSaveBmp,       -- Bitmap stores backup copy of source bitmap
+    hMaskBmp,       -- Bitmap stores mask (monochrome)
+    hInvBmp,        -- Bitmap holds inverse of mask (monochrome)
+    hPrevBmp,       -- Bitmap holds previous bitmap selected in DC
+    hSrcPrevBmp,    -- Holds previous bitmap in source DC
+    hSavePrevBmp,   -- Holds previous bitmap in saved DC
+    hDestPrevBmp,   -- Holds previous bitmap in destination DC
+    hMaskPrevBmp,   -- Holds previous bitmap in the mask DC
+    hInvPrevBmp,    -- Holds previous bitmap in inverted mask DC
+    OrigColor,      -- Holds original background color from source DC
+    Success         -- Stores result of c   all to Windows API
+
+    sequence
+    size            -- holder for size of source         
+
+
+    atom transColor
+    transColor = rgb( 255,0,255)
+
+    -- assume it's a bitmap
+    srcBmp = src     
+    
+    -- get the size of the bitmap
+    size = getCtlSize( srcBmp )
+
+    -- get the values from the bitmap
+    --wide = size[1]
+    --high = size[2]
+
+    -- get the DC of the destintation
+    destDC = getDC( dest )
+
+    -- create DCs to hold temporary information
+    srcDC = w32Func( xCreateCompatibleDC, {destDC} )
+    saveDC = w32Func( xCreateCompatibleDC, {destDC} )
+    maskDC = w32Func( xCreateCompatibleDC, {destDC} )
+    invDC = w32Func( xCreateCompatibleDC, {destDC} )
+    resultDC = w32Func( xCreateCompatibleDC, {destDC} )
+
+    -- Create monochrome bitmaps for the mask-related bitmaps:
+    hMaskBmp = w32Func( xCreateBitmap, {wide, high, 1, 1, 0} )
+    hInvBmp = w32Func( xCreateBitmap, {wide, high, 1, 1, 0} )
+   
+    -- Create color bitmaps for final result & stored copy of source
+    hResultBmp = w32Func( xCreateCompatibleBitmap, {destDC, wide, high} )
+    hSaveBmp = w32Func( xCreateCompatibleBitmap, {destDC, wide, high} )
+   
+    -- select the bitmaps into the DCs
+    hSrcPrevBmp = w32Func( xSelectObject, {srcDC, srcBmp} )
+    hSavePrevBmp = w32Func( xSelectObject, {saveDC, hSaveBmp} )
+    hMaskPrevBmp = w32Func( xSelectObject, {maskDC, hMaskBmp} )
+    hInvPrevBmp = w32Func( xSelectObject, {invDC, hInvBmp} )
+    hDestPrevBmp = w32Func( xSelectObject, {resultDC, hResultBmp} )
+
+    -- Make backup of source bitmap to restore later   
+    Success = w32Func( xBitBlt, {saveDC, 0, 0, wide, high, srcDC, srcX, srcY, SRCCOPY} )
+            
+    -- Create mask: set background color of source to transparent color.
+    OrigColor = w32Func( xSetBkColor, {srcDC, transColor} )
+    Success = w32Func( xBitBlt, {maskDC, 0, 0, wide, high, srcDC, srcX, srcY, SRCCOPY} )
+    
+    -- restore the original color
+    Success = w32Func( xSetBkColor, {srcDC, OrigColor} )
+    
+    -- Create inverse of mask to AND w/ source & combine w/ background.
+    Success = w32Func( xBitBlt, {invDC, 0, 0, wide, high, maskDC, 0, 0, NOTSRCCOPY} )
+    
+    -- Copy background bitmap to result & create final transparent bitmap
+    Success = w32Func( xBitBlt, {resultDC, 0, 0, wide, high, destDC, destX, destY, SRCCOPY} )
+    
+    -- AND mask bitmap w/ result DC to punch hole in the background by
+    -- painting black area for non-transparent portion of source bitmap.
+    Success = w32Func( xBitBlt, {resultDC, 0, 0, wide, high, maskDC, 0, 0, SRCAND} )
+    
+    -- AND inverse mask w/ source bitmap to turn off bits associated
+    -- with transparent area of source bitmap by making it black.
+    Success = w32Func( xBitBlt, {srcDC, srcY, srcY, wide, high, invDC, 0, 0, SRCAND} )
+   
+    -- XOR result w/ source bitmap to make background show through.
+    Success = w32Func( xBitBlt, {resultDC, 0, 0, wide, high, srcDC, srcY, srcY, SRCPAINT} )
+    
+    -- Display transparent bitmap on backgrnd
+    Success = w32Func( xBitBlt, {destDC, destX, destY, wide, high, resultDC, 0, 0, SRCCOPY} )
+    
+    -- Restore backup of bitmap.
+    Success = w32Func( xBitBlt, {srcDC, 0, 0, wide, high, saveDC, 0, 0, SRCCOPY} )
+    
+    -- select the original objects
+    hPrevBmp = w32Func( xSelectObject, {srcDC, hSrcPrevBmp} )
+    hPrevBmp = w32Func( xSelectObject, {saveDC, hSavePrevBmp} )
+    hPrevBmp = w32Func( xSelectObject, {resultDC, hDestPrevBmp} )
+    hPrevBmp = w32Func( xSelectObject, {maskDC, hMaskPrevBmp} )
+    hPrevBmp = w32Func( xSelectObject, {invDC, hInvPrevBmp} )
+
+    -- remove system resources
+    Success = w32Func( xDeleteObject, {hSaveBmp} )
+    Success = w32Func( xDeleteObject, {hMaskBmp} )
+    Success = w32Func( xDeleteObject, {hInvBmp} )
+    Success = w32Func( xDeleteObject, {hResultBmp} )
+    Success = w32Func( xDeleteDC, {srcDC} )
+    Success = w32Func( xDeleteDC, {saveDC} )
+    Success = w32Func( xDeleteDC, {invDC} )
+    Success = w32Func( xDeleteDC, {maskDC} )
+    Success = w32Func( xDeleteDC, {resultDC} )
+
+    -- release the DC of the destintation
+    releaseDC( dest)
+end procedure
+
+--Almost the same as bitBlt except it alows the src and dst to be the same control
+global procedure winddraw_bitBlt( atom dst, integer dstX, integer dstY, 
+            atom src, integer srcX, integer srcY, 
+            integer wide, integer high,
+            integer rop )
+
+
+    -- wrapper to bitblt
+                
+    -- copy portion of window into bitmap
+    integer srcIsWin, dstIsWin
+    atom srcDC, dstDC
+
+    -- get the DCs
+    srcDC = getDC( src )
+    if src = dst then
+        dstDC = srcDC
+    else
+        dstDC = getDC( dst )
+    end if
+
+    -- copy area
+    if not w32Func( xBitBlt, { 
+            dstDC, dstX, dstY, 
+            wide, high,
+            srcDC,
+            srcX, srcY,
+            rop} ) then
+            
+    warnErr( "bitBlt:BitBlt failed." )
+            
+    end if
+
+    -- release the DCs
+    releaseDC( dst )
+    if src != dst then
+        releaseDC( src )
+    end if
+
+end procedure
+
+--A combination of BitBlt and transBlt, can do partial source images
+global procedure windraw_transBitBlt( atom dest, integer destX, integer destY, 
+            atom src, integer srcX, integer srcY, 
+            integer wide, integer high)
+    atom sDC,dDC
+    if funcTransparentBlt = -1 then
+        AlternateTransBitBlt(dest, destX, destY, src, srcX, srcY, wide, high)
+    else
+        sDC = getDC(src)
+        dDC = getDC(dest)
+        if not c_func(funcTransparentBlt,{dDC, destX, destY ,wide ,high ,sDC, srcX, srcY, wide, high,rgb(255,0,255)}) then
+            warnErr("windraw_transBitBlt failed")
+        end if
+        releaseDC(sDC)
+        releaseDC(dDC)
+    end if
+end procedure   
+
+global procedure windraw_transBlt( atom dest, integer destX, integer destY, atom src)
+    atom sDC,dDC
+    sequence size
+    if funcTransparentBlt = -1 then
+        transBlt(dest,destX,destY,src)
+    else
+        sDC = getDC(src)
+        dDC = getDC(dest)
+        size = getCtlSize(src)
+        if not c_func(funcTransparentBlt,{dDC, destX, destY ,size[1] ,size[2] ,sDC, 0, 0, size[1], size[2],rgb(255,0,255)}) then
+            warnErr("windraw_transBlt failed")
+        end if
+        releaseDC(sDC)
+        releaseDC(dDC)
+    end if
+end procedure   
+
+global procedure windraw_TileImage(atom dest, atom src, atom x1, atom y1, atom x2, atom y2, atom Trans)
+    sequence size
+    atom x,y
+    atom width,height
+    atom tmpdest,destDC,tmpdestDC
+    sequence rect
+    
+    size = getCtlSize(src)
+
+    
+    width  = size[1]
+    height = size[2]    
+
+    if width <= 0 or height <= 0 then
+        --If the area has no area then don't tile on it :)
+        return
+    end if
+    
+    if (((x2-x1)/width) * ((y2-y1)/height)) < 5 then
+        --this is to small to be worth doing the optomizations
+        for xx = x1 to x2  by size[1] do
+            width = size[1]
+            if xx+size[1] > x2 then
+                width = x2-xx
+            end if
+            if width = 0 then exit end if
+            for yy = y1 to y2 by size[2] do
+                height = size[2]
+                if yy+size[2] > y2 then
+                    height = y2-yy
+                end if  
+                if height = 0 then exit end if
+                if Trans then
+                    windraw_transBitBlt(dest,
+                           xx,yy,
+                           src,
+                           0,0,
+                           width,height)
+                else
+                    bitBlt(dest,
+                           xx,yy,
+                           src,
+                           0,0,
+                           width,height,
+                           SRCCOPY)
+                end if
+            end for
+        end for
+    else
+    
+        if Trans then
+            destDC = getDC(dest)
+            tmpdest = w32Func( xCreateCompatibleBitmap, {destDC, x2-x1, y2-y1} )
+            releaseDC(dest)
+            --tmpdest = create(Pixmap,"",0,0,0,x2-x1,y2-y1,0)
+            rect = {0,0,x2-x1, y2-y1}
+        else
+            tmpdest = dest
+            rect = {x1,y1,x2,y2}
+        end if
+        
+        if rect[1]+width > rect[3] then
+            width = rect[3]-rect[1]
+        end if  
+        if rect[2]+height > rect[4] then
+            height = rect[4]-rect[2]
+        end if  
+        bitBlt(tmpdest,
+               rect[1],rect[2],
+               src,
+               0,0,
+               width,height,
+               SRCCOPY)
+        
+        --Get a DC for the destination
+        tmpdestDC = getDC(tmpdest)
+        
+        y = rect[2]+height
+        while y < rect[4] do
+            height = y - rect[2]
+            if y+height > rect[4] then
+                height = rect[4]-y
+            end if  
+
+            if not w32Func( xBitBlt, { 
+                            tmpdestDC, rect[1], y, 
+                            width, height,
+                            tmpdestDC,
+                            rect[1], rect[2],
+                            SRCCOPY} ) then
+                warnErr( "windraw_TileImage:BitBlt(1) failed." )
+            end if
+            
+            y = y + height
+        end while
+
+            
+        x = rect[1]+width
+        while x < rect[3] do
+            width = x - rect[1]
+            if x+width > rect[3] then
+                width = rect[3]-x
+            end if
+
+            if not w32Func( xBitBlt, { 
+                            tmpdestDC, x, rect[2], 
+                            width, rect[4]-rect[2],
+                            tmpdestDC,
+                            rect[1], rect[2],
+                            SRCCOPY} ) then
+                warnErr( "windraw_TileImage:BitBlt(2) failed." )
+            end if                   
+                   
+            x = x + width
+        end while  
+        
+        --Release the DC we got above
+        releaseDC(tmpdest)
+        
+        if Trans then   
+            windraw_transBlt(dest,x1,y1,tmpdest)
+            if w32Func( xDeleteObject, {tmpdest} ) then end if
+        end if
+    end if
+end procedure

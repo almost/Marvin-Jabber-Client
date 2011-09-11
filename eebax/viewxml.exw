@@ -1,0 +1,193 @@
+-- Demo for EEBAX XML Library
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+-- This demo requires win32lib, EEBAX on it's own doesn't
+--
+-- Based on (orignaly anyway):
+-- Demo for Listview wrappers.
+-- Matt Lewis (matthewlewis@hotmail.com)
+
+constant XML_FILE = "demo.xml",
+         CHUNK_SIZE = 1024 -- How much to read in at a time
+
+include eebax.e
+without warning
+include win32lib.ew
+include msgbox.e
+
+atom TV, Text
+object junk
+
+constant 
+Win = create( Window, "XML Demo", 0, Default, Default, 640, 460, 0 )
+    
+TV = create( TreeView,
+               "Treeview",
+                Win,
+                10,
+                10,
+                300, --CW_USEDEFAULT,
+                300, --CW_USEDEFAULT,
+                or_all({TVS_HASLINES, TVS_LINESATROOT, TVS_HASBUTTONS,
+                        TVS_SHOWSELALWAYS}))
+
+Text = create(   MleText,
+                "",
+                Win,
+                320,
+                10,
+                300, --CW_USEDEFAULT,
+                300, --CW_USEDEFAULT,
+                0)
+
+
+atom iExw, ptr, mask, current
+current = 0
+ptr = allocate_string( "exw" )
+mask = or_all( {LVIF_IMAGE, LVIF_PARAM, LVIF_TEXT})
+iExw = w32Func(xLoadIcon,{instance(), ptr} )
+free(ptr)
+constant 
+ICON_ELEMENT     = addIcon( extractIcon( "clsdfold.ico" ) ),
+ICON_ATTRIBUTE   = addIcon( iExw ),
+ICON_PI          = addIcon( iExw ),
+ICON_COMMENT     = addIcon( iExw ),
+ICON_CDATA       = addIcon( iExw )
+
+
+-- Data to be displayed in Text for items in the TV
+-- Sequence of {TV index,data} pairs
+sequence data
+data = {}
+
+-- The TV index of the current parent item
+atom CurrentParent
+
+-- Event handlers:
+procedure onStartElement(integer hInst,sequence Uri, sequence LocalName, sequence QName, sequence Atts)
+    -- Add the element to the TV
+    CurrentParent = addTVItem( TV, ICON_ELEMENT, ICON_ELEMENT, QName, CurrentParent)
+    -- Now add it's attributes
+    for i = 1 to length(Atts) do
+        data = append(data,{
+                      addTVItem( TV, ICON_ATTRIBUTE, ICON_ATTRIBUTE, "[att] " & Atts[i][EEBAX_ATTS_QNAME], CurrentParent),
+                      Atts[i][EEBAX_ATTS_VALUE]})
+    end for
+end procedure
+
+procedure onEndElement(integer hInst,sequence Uri, sequence LocalName, sequence QName)
+    -- Move the CurrentParent one place up the tree
+    CurrentParent = getTVParent(CurrentParent)
+end procedure
+
+procedure onStartPrefixMapping(integer hInst,sequence Prefix, sequence Uri)
+    -- Not used in this demo
+end procedure
+
+procedure onEndPrefixMapping(integer hInst,sequence Prefix, sequence Uri)
+    -- Not used in this demo
+end procedure
+
+procedure onCharacters(integer hInst,sequence Chars)
+    data = append(data,{
+                  addTVItem( TV, ICON_CDATA, ICON_CDATA, "[cdata]", CurrentParent),
+                  Chars})
+end procedure
+
+procedure onIgnorableWhitespace(integer hInst,sequence Chars)
+    -- Uncomment below to display ignorable whitespace
+    -- data = append(data,{
+    --               addTVItem( TV, ICON_CDATA, ICON_CDATA, "[whitespace]", CurrentParent),
+    --               Chars})
+end procedure
+
+procedure onProcessingInstruction(integer hInst,sequence Target, sequence Data)
+    data = append(data,{
+                  addTVItem( TV, ICON_PI, ICON_PI, "[PI] " & Target, CurrentParent),
+                  Data})
+end procedure
+
+procedure onComment(integer hInst,sequence Comment)
+    data = append(data,{
+                  addTVItem( TV, ICON_COMMENT, ICON_COMMENT, "[Comment]", CurrentParent),
+                  Comment})
+end procedure
+
+procedure onParseError(integer hInst, integer ErrorNumber, sequence Description, integer LineNumber)
+    if message_box(sprintf("Error encountered on line %d of %s: %s",{LineNumber,XML_FILE,Description}), "EEBAX Demo", MB_ICONERROR) then end if
+end procedure
+
+procedure onXML(integer hInst, sequence XML)
+    -- puts(1,XML)
+end procedure
+
+procedure LoadXMLFile(sequence FileName)
+    atom fn
+    sequence in
+    atom eebax
+    -- Note that XML files should be read in binary mode, UTF-16 Unicode files tend to get messed up if they're read in text mode
+    fn = open(FileName,"rb") 
+    if fn = -1 then
+        if message_box("Unable to open " & XML_FILE, "EEBAX Demo", MB_ICONERROR) then end if
+        return
+    end if
+    
+    -- Create a parser instance to parse the XML file
+    eebax = eebax_NewInstance()
+    
+    -- Set up events for the new instance
+    eebax_SetStartElementEvent          (eebax,routine_id("onStartElement"))
+    eebax_SetEndElementEvent            (eebax,routine_id("onEndElement"))
+    eebax_SetStartPrefixMappingEvent    (eebax,routine_id("onStartPrefixMapping"))
+    eebax_SetEndPrefixMappingEvent      (eebax,routine_id("onEndPrefixMapping"))
+    eebax_SetCharactersEvent            (eebax,routine_id("onCharacters"))
+    eebax_SetIgnorableWhitespaceEvent   (eebax,routine_id("onIgnorableWhitespace"))
+    eebax_SetProcessingInstructionEvent (eebax,routine_id("onProcessingInstruction"))
+    eebax_SetCommentEvent               (eebax,routine_id("onComment"))
+    eebax_SetParseErrorEvent            (eebax,routine_id("onParseError"))
+    eebax_SetXMLEvent                   (eebax,routine_id("onXML"))
+    
+    -- Start a new XML Document, this must be called before parseing can begin
+    eebax_StartDocument(eebax)
+    -- Initilize the TV
+    eraseItems(TV)
+    CurrentParent = 0
+    while 1 do
+        in = get_bytes(fn,CHUNK_SIZE)
+        if not eebax_Parse(eebax,in) then
+            -- Destroy the parser instance
+            eebax_DestroyInstance(eebax)
+            -- Close the file
+            close(fn)
+            return
+        end if
+        if length(in) < CHUNK_SIZE then
+            exit
+        end if
+    end while
+    -- Close the file
+    close(fn)
+    -- End the XML Document, this should always be called after the entire file has been parsed
+    eebax_EndDocument(eebax)
+    
+    -- Destroy the parser instance
+    eebax_DestroyInstance(eebax)
+end procedure
+
+procedure TV_onChange( )
+    atom ix
+    current = getIndex( TV )
+
+    -- Show associated data in Text if any exists
+    for i = 1 to length(data) do
+        if data[i][1] = current then
+            setText(Text,data[i][2])
+        end if
+    end for
+end procedure
+onChange[TV] = routine_id( "TV_onChange" )
+
+LoadXMLFile("demo.xml")
+WinMain( Win, Normal )
+
+

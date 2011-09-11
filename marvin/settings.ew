@@ -1,0 +1,342 @@
+-- Handles any settings that can be saved on the server
+-- Do not use for passwords or other sensitive stuff, will be sent in plaintext
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include eebax.e
+include xmltree.e
+include jabber.ew
+include misc.e
+include reg.ew
+include timers.ew
+
+constant sLOCAL   = 1,
+         sSECTION = 2,
+         sNAME    = 3,
+         sDEFAULT = 4,
+         sNOTIFY  = 5
+
+--Both local and remotely stored settings are listed here
+--{localystored,section,name,default}
+constant SETTINGS = {
+         {0,"MessageWin",  "ShowInMessagePane"   ,0},
+         {0,"MessageWin",  "DisplayInNewWindow"  ,0},
+         {0,"MessageWin",  "SendHTML"            ,1},
+         {0,"MessageWin",  "CloseAfterSend"      ,0},
+         {0,"MessageWin",  "EnterSends"          ,0},
+         {0,"MessageWin",  "PopupNewMessages"    ,0},
+         {0,"MessageWin",  "AutoShowHistory"     ,0},
+         {0,"MessageWin",  "DefaultFont"         ,"Arial"},
+         {0,"MessageWin",  "DefaultFontSize"     ,12},
+         {0,"MessageWin",  "ShowPresenceInChat"  ,1},
+         {0,"MessageWin",  "EnableComposingEvent",1},
+         {0,"Status",      "DefaultAvailable"    ,"Available"},
+         {0,"Status",      "DefaultChat"         ,"Free for Chat"},
+         {0,"Status",      "DefaultAway"         ,"Away"},
+         {0,"Status",      "DefaultXA"           ,"Extended Away"},
+         {0,"Status",      "DefaultDND"          ,"Do Not Disturb"},
+         {0,"Status",      "EnableAutoAway"      ,0},
+         {0,"Status",      "AutoAway"            ,5},
+         {0,"Status",      "AutoXA"              ,30},
+         {0,"Status",      "AutoAwayMessage"     ,"Away (Auto)"},
+         {0,"Status",      "AutoXAMessage"       ,"Extended Away (Auto)"},
+         {0,"Status",      "availablePresets"    ,""},
+         {0,"Status",      "ChatPresets"         ,""},
+         {0,"Status",      "AwayPresets"         ,"Just popped out for a second;Out to lunch;Be right back"},
+         {0,"Status",      "XaPresets"           ,"Gone home;At work"},
+         {0,"Status",      "DNDPresets"          ,"Working...;Urgent messages only please"},
+         {0,"SysTray",     "FlashNewMessageIcon" ,1},
+         {0,"Security",    "LogMessages"         ,0},
+         {0,"Colors",      "OwnNick"             ,rgb(0,0,255)},
+         {0,"Colors",      "OthersNick"          ,rgb(255,0,0)},
+         {0,"Colors",      "Emotes"              ,rgb(128,0,128)},
+         {0,"Colors",      "StatusChanges"       ,rgb(192,192,192)},
+         {0,"Roster",      "TransAlpha"          ,255},
+         {0,"Roster",      "Topmost"             ,0},
+         {0,"Roster",      "ShowEmptyGroups"     ,0},
+         {0,"Roster",      "PendingCat"          ,0}, --Show pending roster items in a different category
+         {0,"Roster",      "CollapsedGroups"     ,""},
+         {0,"Roster",      "CollapsedCats"       ,""},
+         {0,"Roster",      "OpenGroupItemCount"  ,0},
+         {0,"Roster",      "ClosedGroupItemCount",1},
+         {0,"Roster",      "ItemFont"            ,"Arial"},
+         {0,"Roster",      "ItemFontSize"        ,11},
+         {0,"Roster",      "ItemColor"           ,rgb(0,0,0)},
+         {0,"Roster",      "BackgroundColor"     ,rgb(255,255,255)},
+         {0,"Roster",      "FlashNewMessageIcon" ,1},
+         {0,"Roster",      "ShowInTaskbar"       ,0},
+         {0,"History",     "DayHeaders"          ,1},
+         {0,"History",     "DateStamps"          ,1},
+         {0,"Notification","MessageEnable"       ,1},
+         {0,"Notification","PresenceEnable"      ,0},
+         {0,"Notification","BackColor"           ,getSysColor(COLOR_INFOBK)},
+         {0,"Notification","Font"                ,"Arial"},
+         {0,"Notification","FontSize"            ,8},
+         {0,"Notification","Timeout"             ,4},
+         
+         {1,"Login",       "Username"            ,""},
+         {1,"Login",       "Password"            ,""},
+         {1,"Login",       "Server"              ,"jabber.org"},
+         {1,"Login",       "Resource"            ,"home"},
+         {1,"Login",       "SavePassword"        ,0},
+         {1,"Login",       "AutoLogin"           ,0},
+         {1,"Login",       "Priority"            ,1},
+         {1,"Sounds",      "Message"             ,"sounds\\message.wav"},
+         {1,"Sounds",      "ContactOnline"       ,"sounds\\online.wav"},
+         {1,"Sounds",      "ContactOffline"      ,"sounds\\offline.wav"},
+         {1,"Sounds",      "Enable"              ,1},
+         {1,"Skin",        "Last"                ,DEFAULT_SKIN}
+         }
+         
+sequence Settings
+Settings = SETTINGS
+for i = 1 to length(Settings) do
+    Settings[i] &= {{}}
+end for
+
+constant DELIMITER="_"
+
+atom SettingsRetrievalFailed
+SettingsRetrievalFailed = 0
+
+--{"section_name",value}         
+sequence CachedSettings
+CachedSettings = {}
+integer Loaded
+Loaded = 0
+
+--Sequence of routine ids to be called when settings are recieved from the server
+sequence onRecieved
+onRecieved = {}
+
+atom LastSave --The time settings were last saved, for flood protection
+LastSave = 0
+
+global procedure settings_onRecieved(atom routineid)
+    if find(routineid,onRecieved) = 0 and routineid != -1 then
+        onRecieved &= routineid
+    end if
+end procedure
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+sequence xmlbuffer
+procedure onXML(integer hInst, sequence XML)
+    xmlbuffer &= XML
+end procedure
+    
+procedure SaveSettingsTimer()
+    integer hinst
+    StopTimerEvent(routine_id("SaveSettingsTimer"))
+    xmlbuffer = ""
+    hinst = eebax_NewInstance()
+    eebax_SetXMLEvent(hinst,routine_id("onXML"))
+    eebax_StartDocument(hinst)
+    eebax_StartElement(hinst,CLIENT_NAME,{{"xmlns",CLIENT_NAME&":prefs"}} & CachedSettings,1)
+    eebax_EndDocument(hinst)
+    eebax_DestroyInstance(hinst)
+    jabber_StorePrivateData(xmlbuffer)
+    LastSave = time()
+end procedure
+
+--When the SaveSettings() procedure is called a timer is set to call the SaveSettingsTimer,
+--this means if a lot of settings are being set at once it's a lot more efficient
+procedure SaveSettings()
+    if time() - LastSave < 5  then
+        GetTimerEvent(routine_id("SaveSettingsTimer"),5000)
+    else
+        GetTimerEvent(routine_id("SaveSettingsTimer"),1)
+    end if
+end procedure
+
+function FindSetting(sequence section, sequence name)
+
+    section = lower(section)
+    name = lower(name)
+
+    for i = 1 to length(Settings) do
+        if equal(section,lower(Settings[i][sSECTION])) and equal(name,lower(Settings[i][sNAME])) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+function CurrentJIDWithoutResource()
+    sequence j
+    j = jabber_SplitJID(jabber_CurrentJID())
+    return j[1]&"@"&j[2]
+end function
+
+global function settings_Get(sequence section, sequence name)
+    atom mem
+    integer index,cachedloc
+    object temp
+    
+    index = FindSetting(section,name)
+    if index = 0 then
+        puts(1,"ERROR: Setting: \"" & name & "\" in section: \"" & section & "\" is unknown.\n")
+        return 0
+    end if
+    
+    if Settings[index][sLOCAL] or SettingsRetrievalFailed or Loaded = 0 then
+        --Stored in the local registry
+        if Settings[index][sLOCAL] then
+            temp = regQueryValue("HKEY_CURRENT_USER\\Software\\"&CLIENT_NAME&"\\"&Settings[index][sSECTION],Settings[index][sNAME],Settings[index][sDEFAULT])
+        else
+            temp = regQueryValue("HKEY_CURRENT_USER\\Software\\"&CLIENT_NAME&"\\localcache\\" & CurrentJIDWithoutResource() & "\\" & Settings[index][sSECTION],
+                                 Settings[index][sNAME],Settings[index][sDEFAULT])
+        end if
+        if atom(temp) then
+            --Convert the value to a signed value:
+            mem = allocate(4)
+            poke4(mem,temp)
+            temp = peek4s(mem)
+            free(mem)
+        end if
+        if (sequence(Settings[index][sDEFAULT]) and atom(temp)) or (sequence(temp) and atom(Settings[index][sDEFAULT])) then
+            return Settings[index][sDEFAULT]
+        else
+            return temp
+        end if
+    else
+        --Stored on the server in public XML storage
+        cachedloc = sub_find(Settings[index][sSECTION]&DELIMITER&Settings[index][sNAME],CachedSettings,1)
+        if cachedloc then
+            if atom(Settings[index][sDEFAULT]) then
+                temp = value(CachedSettings[cachedloc][2])
+                return temp[2]
+            else
+                return CachedSettings[cachedloc][2]
+            end if
+        else
+            return Settings[index][sDEFAULT]
+        end if
+    end if
+end function
+
+procedure onRecievePrivateData(sequence NS, atom XML)
+    integer loc
+    sequence Atts
+    if XML != -1 then
+        Atts = xmltree_GetAttributes(XML)
+        for i = 1 to length(Atts) do
+            if not equal(Atts[i][EEBAX_ATTS_QNAME],"xmlns") then
+                loc = sub_find(Atts[i][EEBAX_ATTS_QNAME],CachedSettings,1)
+                if not loc then
+                    CachedSettings = append(CachedSettings,{Atts[i][EEBAX_ATTS_QNAME],Atts[i][EEBAX_ATTS_VALUE]})
+                end if
+            end if
+        end for
+        
+        -- Save settings in the local cache
+        for i = 1 to length(Settings) do
+            if not Settings[i][sLOCAL] then
+                if regSetValue("HKEY_CURRENT_USER\\Software\\"&CLIENT_NAME&"\\localcache\\" & CurrentJIDWithoutResource() & "\\"&Settings[i][sSECTION], Settings[i][sNAME], 
+                               settings_Get(Settings[i][sSECTION],Settings[i][sNAME])) then end if
+            end if
+        end for
+    else
+        SettingsRetrievalFailed = 1        
+    end if        
+    
+    if Loaded = 0 then
+        SaveSettings()
+        Loaded = 1
+        --Call all the onRecieved handlers
+        for i = 1 to length(onRecieved) do
+            call_proc(onRecieved[i],{})
+        end for
+    end if
+end procedure
+         
+global procedure settings_Reload()
+    CachedSettings = {}
+    Loaded = 0
+    jabber_RetrievePrivateData(CLIENT_NAME&":prefs",routine_id("onRecievePrivateData"))
+end procedure
+
+global procedure settings_Save(sequence section, sequence name, object val)
+    integer cachedloc,index  
+    
+    index = FindSetting(section,name)
+    if index = 0 then
+        puts(1,"ERROR: Setting: \"" & name & "\" in section: \"" & section & "\" is unknown.\n")
+        return
+    end if
+    
+    if equal(settings_Get(Settings[index][sSECTION],Settings[index][sNAME]),val) then return end if
+    
+    if Settings[index][sLOCAL] then
+        if regSetValue("HKEY_CURRENT_USER\\Software\\"&CLIENT_NAME&"\\"&Settings[index][sSECTION], Settings[index][sNAME], val) then end if
+    else
+        if regSetValue("HKEY_CURRENT_USER\\Software\\"&CLIENT_NAME&"\\localcache\\" & CurrentJIDWithoutResource() & "\\"&Settings[index][sSECTION], Settings[index][sNAME], val) then end if
+        if atom(val) then
+            val = sprint(val)
+        end if
+
+        cachedloc = sub_find(Settings[index][sSECTION]&DELIMITER&Settings[index][sNAME],CachedSettings,1)
+        if cachedloc then
+            --change
+            CachedSettings[cachedloc][2] = val
+        else
+            CachedSettings = append(CachedSettings,{Settings[index][sSECTION]&DELIMITER&Settings[index][sNAME],val})
+        end if  
+
+        if Loaded = 1 then
+            SaveSettings()
+        end if
+    end if
+    
+    for i = 1 to length(Settings[index][sNOTIFY]) do
+        call_proc(Settings[index][sNOTIFY][i],{})
+    end for
+end procedure
+
+global procedure settings_RegisterSetting(sequence section, sequence name, sequence default)  
+    Settings = append(Settings,{0,section,name,default,{}})
+end procedure
+
+global procedure settings_NotifyOnChange(sequence section, sequence name, atom rid)
+    atom index
+    
+    section = lower(section)
+    name = lower(name)
+    
+    index = FindSetting(section,name)
+    if index = 0 then
+        puts(1,"ERROR: Setting notify for: \"" & name & "\" in section: \"" & section & "\" is unknown.\n")
+        return
+    end if
+    if index and not find(rid,Settings[index][sNOTIFY]) then
+        Settings[index][sNOTIFY] &= rid
+    end if
+end procedure

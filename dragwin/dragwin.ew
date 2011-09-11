@@ -1,0 +1,255 @@
+--Window Draging/Resizing Library
+--The library allows you to drag or resize a window from any part of the window
+--It's usefull for windows without title bars
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+--21/March/2001
+--http://www.rat-software.com/projects.html
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+--21/March/2001 UPDATE: Only just released a couple of hours ago and allready I've found a bug :( It had a slight problem when used with a window with a title bar (as in example1.exw). Fixed now.
+--28/March/2001 UPDATE: Thanks to EUMAN for pointing out that you need to use releaseDC(Screen) to release a screen DC (no reaseDC(sDC))
+--28/March/2001 UPDATE: Now draws the focus rect the same thickness as border of the window being moved/resized.
+--29/March/2001 UPDATE: Should look better when used with my irregular.ew library. If you cut half of the window off it won't show the focus over the bit you removed
+
+include win32lib.ew
+without warning
+
+global constant dragwin_TOPLEFT     = {1,1,0,0},
+                dragwin_TOPRIGHT    = {0,1,1,0},
+                dragwin_BOTTOMLEFT  = {1,0,0,1},
+                dragwin_BOTTOMRIGHT = {0,0,1,1},
+                dragwin_TOP         = {0,1,0,0},
+                dragwin_BOTTOM      = {0,0,0,1},
+                dragwin_LEFT        = {1,0,0,0},
+                dragwin_RIGHT       = {0,0,1,0}
+        
+
+atom ID
+ID = -1
+atom OldonMouseEvent
+OldonMouseEvent = -1
+sequence RelPos
+RelPos = {0,0}
+sequence WinSize
+WinSize = {0,0}
+sequence WinPos
+
+sequence Rect
+
+sequence RectAdjust --by how much should the rect be adjusted to make the focus rect
+
+atom Action
+constant aMOVE   = 1,
+         aRESIZE = 2
+sequence Dirs --{left,top,right,bottom}
+
+sequence Min,Max
+
+object OldFocusRect
+OldFocusRect = -1
+
+constant GDI32  = open_dll("gdi32" ),
+         USER32 = open_dll("user32")
+
+constant funcCreatePolygonRgn = define_c_func(GDI32, "CreatePolygonRgn",{C_ULONG,C_LONG,C_LONG},C_LONG),
+         funcGetWindowRgn     = define_c_func(USER32,"GetWindowRgn",    {C_POINTER,C_POINTER},C_ULONG),
+         procGetRgnBox        = define_c_proc(GDI32 ,"GetRgnBox",       {C_POINTER,C_POINTER})
+ 
+function CreateNullRegion() --from irregular.ew's CreatePolygonRgn
+    --This function creates a region from a series of points in the format: {{x1,y1},{x2,y},{x3,y}...
+    atom memPoints,Region
+    memPoints = allocate(3 * 8) --each point is two longs
+    mem_set(memPoints,0,3 * 8)
+    Region = c_func(funcCreatePolygonRgn,{memPoints,3,1})
+    free(memPoints)
+    return Region
+end function                
+constant REGION=CreateNullRegion()
+
+procedure DrawFocusRect(object rect)
+    atom sDC,RECT
+    if atom(rect) then return end if
+    --first make the Rect into a RECT
+    RECT = allocate(16)
+    for i = 0 to 3 do
+        poke4(RECT+(i*4),rect[i+1])
+    end for
+    sDC = getDC(Screen)
+    if w32Func(xDrawFocusRect,{sDC,RECT}) then end if
+    releaseDC(Screen) --changed from releaseDC(sDC). Thanks to EUMAN for pointing out this bug
+    free(RECT)
+end procedure
+
+procedure DrawThickFocusRect(object rect)
+    sequence Metrics
+    rect += RectAdjust
+    Metrics = getWindowInfo(ID,{WINDOWINFO_xWindowBorders})
+    for i = 1 to Metrics[1] do
+        DrawFocusRect(rect) 
+        rect += {1,1,-1,-1}
+    end for
+end procedure
+
+--Custom functions, for parts of the program which want to draw focus stuff but want to handle the moving themselfs
+
+global procedure dragwin_DrawFocusRect(atom x1,atom y1,atom x2, atom y2, atom width)
+    for i = 1 to width do
+        DrawFocusRect({x1,y1,x2,y2})    
+        x1 += 1 y1 += 1 
+        x2 += 1 y2 += 1 
+    end for
+end procedure 
+
+global procedure dragwin_DrawFilledFocusRect(atom x1, atom y1, atom x2, atom y2)
+    if remainder(y2-y1,2) = 1 then y2 -= 1 end if
+    for y = y1 to y2 by 2 do
+        DrawFocusRect({x1,y,x2,y+2})
+    end for
+end procedure
+
+-------
+
+
+procedure End()
+    sequence pos
+    if ID = -1 then
+        return
+    end if
+    onMouse[ID] = OldonMouseEvent
+    releaseMouse()
+    DrawThickFocusRect(OldFocusRect)
+    --pos = getMousePos()-RelPos
+    --setRect(ID,pos[1],pos[2],WinSize[1],WinSize[2],True)
+    setRect(ID,Rect[1],Rect[2],Rect[3]-Rect[1],Rect[4]-Rect[2],True)
+    OldFocusRect = -1
+    --OldonMouseEvent = -1
+    ID = -1
+end procedure
+
+procedure Mouse(atom event, atom x, atom y, atom shift)
+    sequence pos
+    if event = MouseMove then
+        if Action = aMOVE then
+            pos = getMousePos()-RelPos
+            Rect = pos&pos+WinSize
+        elsif Action = aRESIZE then
+            pos = getMousePos()
+            Rect = {pos[1],pos[2],pos[1],pos[2]} + {-RelPos[1],-RelPos[2],WinSize[1]-RelPos[1],WinSize[2]-RelPos[2]}
+            Rect = Rect*Dirs +  (({WinPos[1],WinPos[2]}&({WinPos[1],WinPos[2]}+WinSize))*(not Dirs))
+            
+            --Check min and max bounds
+            if Rect[3]-Rect[1] > Max[1] and Max[1] != 0 then
+                if Dirs[1] then
+                    Rect[1] = Rect[3] - Max[1]
+                else
+                    Rect[3] = Rect[1] + Max[1]
+                end if
+            elsif Rect[3]-Rect[1] < Min[1] then
+                if Dirs[1] then
+                    Rect[1] = Rect[3] - Min[1]  
+                else
+                    Rect[3] = Rect[1] + Min[1]
+                end if
+            end if
+            if Rect[4]-Rect[2] > Max[2] and Max[2] != 0 then
+                if Dirs[2] then
+                    Rect[2] = Rect[4] - Max[2]
+                else
+                    Rect[4] = Rect[2] + Max[2]
+                end if
+            elsif Rect[4]-Rect[2] < Min[2] then
+                if Dirs[2] then
+                    Rect[2] = Rect[4] - Min[2]
+                else
+                    Rect[4] = Rect[2] + Min[2]
+                end if
+            end if
+        end if
+        DrawThickFocusRect(Rect)
+        DrawThickFocusRect(OldFocusRect)
+        OldFocusRect = Rect
+    elsif event = LeftUp then
+        End()
+        call_proc(OldonMouseEvent,{event,x,y,shift})
+    end if
+end procedure
+
+procedure AdjustRect()
+    atom memRect
+    sequence rRect
+    
+    if c_func(funcGetWindowRgn,{getHandle(ID),REGION}) then
+        memRect = allocate(4 * 4)
+        c_proc(procGetRgnBox   ,{REGION,memRect})
+        rRect = peek4s({memRect, 4}) + (Rect[1..2] & Rect[1..2])
+        free(memRect)
+        RectAdjust = rRect-Rect
+    else
+        RectAdjust = {0,0,0,0}
+    end if
+end procedure
+
+global procedure dragwin_BeginMove(integer id)
+    --Should ONLY be called from the mousedown event of the window
+    if ID != -1 then
+        End()
+    end if
+    ID = id
+    Action = aMOVE
+    OldonMouseEvent = onMouse[ID]
+    onMouse[id] = routine_id("Mouse")
+    Rect = getRect(ID)
+    --Make sure we recieve all mouse events during draging
+    releaseMouse()
+    captureMouse(ID)
+    --Get the mouse pos relative to the window
+    RelPos = getMousePos() - getPosition(ID) --not the same as getMouseRelPos(id), this returns relative to window, not it's client area
+    WinSize = getCtlSize(ID)
+    AdjustRect()
+    --Repainting the window now stops bits of the focus rect being left over if the window was partialy obscured by another
+    repaintWindow(ID)
+end procedure
+
+global procedure dragwin_BeginResize(integer id,sequence dirs,sequence min,sequence max)
+    --Should ONLY be called from the mousedown event of the window
+    if ID != -1 then
+        End()
+    end if
+    ID = id
+    Action = aRESIZE
+    Dirs = dirs
+    Min = min
+    Max = max
+    OldonMouseEvent = onMouse[ID]
+    onMouse[id] = routine_id("Mouse")
+    Rect = getRect(ID)
+    AdjustRect()
+    --Make sure we recieve all mouse events during resizing
+    releaseMouse()
+    captureMouse(ID)
+    --Get the mouse pos relative to the window
+    RelPos = getMousePos() - getPosition(ID) --not the same as getMouseRelPos(id), this returns relative to window, not it's client area
+    WinSize = getCtlSize(ID)
+    WinPos = getPosition(ID)
+end procedure

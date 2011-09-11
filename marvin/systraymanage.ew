@@ -1,0 +1,307 @@
+-- Handle the system tray for the client using systray.ew
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+--Resources:
+-- <systray/offline> REMOVED
+-- systray/available
+-- systray/chat
+-- systray/away
+-- systray/xa
+-- systray/dnd
+-- systray/message
+
+include systray.ew
+
+constant SysTrayIcon = systray_Create(wndEventProcessor)
+
+constant mnuSysTray      = create(Menu,"",wndEventProcessor,0,0,0,0,0),
+         mnuShowMessages = create(MenuItem,"Show Waiting &Messages",mnuSysTray,0,0,0,0,0),
+         mnuHideShow     = create(MenuItem,"Hide/Show &Roster"     ,mnuSysTray,0,0,0,0,0),
+         mnuSeperator1   = create(MenuItem,"-"                     ,mnuSysTray,0,0,0,0,0),
+         mnuStatus       = create(Menu,"&Status"                   ,mnuSysTray,0,0,0,0,0),
+            mnuAvailable  = create(MenuItem,"&Available"        ,mnuStatus,0,0,0,0,0),
+            mnuChat       = create(MenuItem,"&Free for Chat"    ,mnuStatus,0,0,0,0,0),
+            mnuAway       = create(MenuItem,"A&way"             ,mnuStatus,0,0,0,0,0),
+            mnuXA         = create(MenuItem,"&Extended Away"    ,mnuStatus,0,0,0,0,0),
+            mnuDND        = create(MenuItem,"&Do Not Disturb"   ,mnuStatus,0,0,0,0,0),
+            mnuCustom     = create(MenuItem,"&Custom"           ,mnuStatus,0,0,0,0,0),
+         mnuSeperator2   = create(MenuItem,"-"                     ,mnuSysTray,0,0,0,0,0),
+         mnuAddContact   = create(MenuItem,"&Add Contact"          ,mnuSysTray,0,0,0,0,0),
+         mnuChangeSkin   = create(MenuItem,"Change S&kin"          ,mnuSysTray,0,0,0,0,0),
+         mnuGateways     = create(MenuItem,"&Gateway Setup"        ,mnuSysTray,0,0,0,0,0),
+         mnuSettings     = create(MenuItem,"S&ettings"             ,mnuSysTray,0,0,0,0,0),
+         mnuSounds       = create(MenuItem,"Enable S&ounds"         ,mnuSysTray,0,0,0,0,0),
+         mnuSeperator3   = create(MenuItem,"-"                     ,mnuSysTray,0,0,0,0,0),
+         mnuLogOff       = create(MenuItem,"&Log Off"              ,mnuSysTray,0,0,0,0,0),
+         mnuExit         = create(MenuItem,"E&xit"                 ,mnuSysTray,0,0,0,0,0)
+
+atom CurrentIcon
+CurrentIcon = 0
+
+sequence Icons --sequence of {resourcenames,bmp,ico}
+Icons = {}
+
+-- Fixed version of the function of the same name in win32lib
+-- peek4u changed to peek4s to work with negative mouse coords in multimonitor systems
+object VOID
+function getPointerPos()
+    atom tmpMem
+    sequence xy
+
+    tmpMem = acquire_mem(0, 8)
+
+    VOID = w32Func(xGetCursorPos,{tmpMem})
+
+    xy = peek4s({tmpMem, 2})
+
+    release_mem( tmpMem)
+
+    return xy
+end function
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+procedure ChangeIcon(sequence resourcenames)
+    atom loc,temp,resource
+    resource = skinx_GetResource(resourcenames)
+    
+    if resource = 0 then
+        return
+    end if
+
+    loc = sub_find(resourcenames,Icons,1)
+    if loc = 0 or resource != Icons[loc][2] then
+        if loc != 0 then
+            if w32Func( xDeleteObject, {Icons[loc][3]} ) then end if
+            temp =Icons[loc][2]
+            while 1 do
+                loc = sub_find(temp,Icons,2)
+                if not loc then
+                    exit
+                end if
+                Icons = Icons[1..loc-1]&Icons[loc+1..length(Icons)]
+            end while
+        end if
+        Icons = append(Icons,{resourcenames,resource,systray_Bitmap2Icon(resource)})
+        loc = length(Icons)
+    end if
+
+    if CurrentIcon != Icons[loc][3] then
+        systray_SetIcon(SysTrayIcon,Icons[loc][3])
+        CurrentIcon = Icons[loc][3]
+    end if
+end procedure
+
+global procedure systraymanage_Update()
+    sequence status,resourcenames,hiddenmessagejids,Tip
+    atom loc,resource,temp
+    
+    status = jabber_GetShowState()
+    if status[1] = JABBER_SHOWSTATE_CHAT then
+        resourcenames = {"systray/chat","systray/available"}
+    elsif status[1] = JABBER_SHOWSTATE_AWAY then
+        resourcenames = {"systray/away","systray/available"}
+    elsif status[1] = JABBER_SHOWSTATE_XA then
+        resourcenames = {"systray/xa","systray/away","systray/available"}
+    elsif status[1] = JABBER_SHOWSTATE_DND then
+        resourcenames = {"systray/dnd","systray/away","systray/available"} 
+    else
+        resourcenames = {"systray/available"}
+    end if
+    
+    hiddenmessagejids = message_EnumJIDHiddenMessageWins()
+    if length(hiddenmessagejids) > 0 then
+        Tip = "Marvin - "
+        if  length(hiddenmessagejids) = 1 then
+            Tip &= "Message from " & jabber_rosterGetNick(hiddenmessagejids[1])
+        else
+            Tip &= "Messages from "
+            for i = 1 to length(hiddenmessagejids) - 1 do
+                Tip &= jabber_rosterGetNick(hiddenmessagejids[i])
+                if i = length(hiddenmessagejids) - 1 then
+                    Tip &= " and "
+                else
+                    Tip &= ", "
+                end if
+            end for
+            Tip &= jabber_rosterGetNick(hiddenmessagejids[length(hiddenmessagejids)])
+        end if
+        if settings_Get("SysTray","FlashNewMessageIcon") then
+            ChangeIcon(resourcenames)
+        else
+            ChangeIcon({"systray/message"}&resourcenames)
+        end if
+    else
+        Tip = "Marvin - " & JABBER_SHOW_STATES_FRIENDLY[status[1]]
+        ChangeIcon(resourcenames)
+    end if
+    systray_SetTip(SysTrayIcon,Tip)
+end procedure
+
+global procedure systraymanage_Show()
+    systray_Show(SysTrayIcon)
+end procedure
+
+global procedure systraymanage_Hide()
+    systray_Hide(SysTrayIcon)
+end procedure
+
+procedure onsystray(integer index, atom message)
+    sequence mousepos
+    if message= WM_LBUTTONDOWN then
+        if messages_HiddenMessageWinCount() > 0 then
+            --Show hidden messages
+            messages_ShowHiddenMessages()
+            systraymanage_Update()
+        else
+            --Show the roster
+            wndroster_Open()
+            moveZOrder(wndRoster,HWND_TOPMOST)
+            if not settings_Get("Roster","Topmost") then
+                moveZOrder(wndRoster,HWND_NOTOPMOST)
+            end if
+        end if
+    elsif message = WM_RBUTTONUP then
+        mousepos = getPointerPos()
+        mousepos = ScreenToClient(wndEventProcessor,mousepos[1],mousepos[2])
+        if isVisible(wndRoster) then
+            --setText(mnuHideShow,"Hide Roster")
+        else
+            --setText(mnuHideShow,"Show Roster")
+        end if
+        if messages_HiddenMessageWinCount() > 0 then
+            setEnable(mnuShowMessages,1)
+        else
+            setEnable(mnuShowMessages,0)
+        end if
+        setCheck(mnuSounds,settings_Get("Sounds","Enable"))
+        popup(mnuSysTray,mousepos[1],mousepos[2])
+    end if
+end procedure
+
+systray_SetEvent(SysTrayIcon,routine_id("onsystray"))
+
+procedure FlashTimer()
+    if settings_Get("SysTray","FlashNewMessageIcon") and messages_HiddenMessageWinCount() > 0 then
+        if floor(time())/2 = floor(floor(time())/2) then
+            ChangeIcon({"systray/message"})
+        else
+            systraymanage_Update() --reset the icon back to normal
+        end if
+    end if
+end procedure
+GetTimerEvent(routine_id("FlashTimer"),1000)
+
+--MENU EVENT HANDLERS
+
+procedure mnuShowMessages_onclick()
+    --Show hidden messages
+    messages_ShowHiddenMessages()
+    systraymanage_Update()
+end procedure
+onClick[mnuShowMessages] = routine_id("mnuShowMessages_onclick")
+
+procedure mnuHideShow_onclick()
+    if isVisible(wndRoster) then
+        wndroster_Close()
+    else
+        wndroster_Open()
+    end if
+end procedure
+onClick[mnuHideShow] = routine_id("mnuHideShow_onclick")
+
+procedure mnuAvailable_onclick()
+    events_SendEvent(wndRoster,"setavailable")
+end procedure
+onClick[mnuAvailable] = routine_id("mnuAvailable_onclick")
+
+procedure mnuChat_onclick()
+    events_SendEvent(wndRoster,"setchat")
+end procedure
+onClick[mnuChat] = routine_id("mnuChat_onclick")
+
+procedure mnuAway_onclick()
+    events_SendEvent(wndRoster,"setaway")
+end procedure
+onClick[mnuAway] = routine_id("mnuAway_onclick")
+
+procedure mnuXA_onclick()
+    events_SendEvent(wndRoster,"setxa")
+end procedure
+onClick[mnuXA] = routine_id("mnuXA_onclick")
+
+procedure mnuDND_onclick()
+    events_SendEvent(wndRoster,"setdnd")
+end procedure
+onClick[mnuDND] = routine_id("mnuDND_onclick")
+
+procedure mnuCustom_onclick()
+    events_SendEvent(wndRoster,"setcustom")
+end procedure
+onClick[mnuCustom] = routine_id("mnuCustom_onclick")
+
+procedure mnuAddContact_onclick()
+    wndaddcontact_Open()
+end procedure
+onClick[mnuAddContact] = routine_id("mnuAddContact_onclick")
+
+procedure mnuChangeSkin_onclick()
+    wndchangeskin_Open()
+end procedure
+onClick[mnuChangeSkin] = routine_id("mnuChangeSkin_onclick")
+
+procedure mnuGateways_onclick()
+    wndgateways_Open()
+end procedure
+onClick[mnuGateways] = routine_id("mnuGateways_onclick")
+
+procedure mnuSettings_onclick()
+    wndsettings_Open()
+end procedure
+onClick[mnuSettings] = routine_id("mnuSettings_onclick")
+
+procedure mnuSounds_onclick()
+    events_SendEvent(wndRoster,"ToggleSounds")
+end procedure
+onClick[mnuSounds] = routine_id("mnuSounds_onclick")
+
+procedure mnuLogOff_onclick()
+    if jabber_State != JABBER_S_CLOSED then
+        jabber_Disconnect(1)
+    end if
+end procedure
+onClick[mnuLogOff] = routine_id("mnuLogOff_onclick")
+
+procedure mnuExit_onclick()
+    shutdown_Ask()
+end procedure
+onClick[mnuExit] = routine_id("mnuExit_onclick")

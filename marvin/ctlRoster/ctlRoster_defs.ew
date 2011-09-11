@@ -1,0 +1,1022 @@
+--ctlRoster control definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--uses resources:
+--Roster/Cat/Expanded
+--Roster/Cat/Collapsed
+--Roster/Group/Expanded
+--Roster/Group/Collapsed
+
+--Cats are stuff like Online/Offline
+--Groups are stuff like Friends, Family, Work
+--Groups can be collapsed, maybe it should be possible to hide Cats in some way...
+--btw, just ocured to me that u might not have worked out what cats are yet, they're categorys :)
+include windraw.ew
+
+include sort.e
+
+
+constant CATS = {"Online","Offline","Pending","Gateways"}
+constant NO_GROUPS = {"Gateways"}
+
+--BEGIN INSTANCE UNIQUE VARS---------------
+--Should be ok to sort() Items Cats and Groups
+sequence Items --{Text,IDENT,Cat,Group,Image}
+constant iTEXT  = 1,
+         iHINT  = 2,
+         iIDENT = 3,
+         iCAT   = 4,
+         iGROUP = 5,
+         iIMAGE = 6
+constant BLANK_ITEM = {"","","","","",0}
+Items = {}
+sequence WinID
+WinID = {}
+sequence RosterArea
+RosterArea = {}
+sequence Buffer
+Buffer = {}
+
+--Calculated:
+
+sequence Cats --{Name,Expanded(boolean)}
+Cats = {}
+constant cNAME     = 1,
+         cEXPANDED = 2
+constant BLANK_CAT = {"",1}
+sequence Groups --{Name}
+Groups = {}
+constant gNAME     = 1,
+         gCOLLAPSED = 2 --list of cats in which it is collapsed
+constant BLANK_GROUP = {"",{}}
+
+--What is currently displayed
+sequence DisplayList --{{type(1=CAT,2=GROUP,3=ITEM),IDENT},text,textalign,indent,textindent,font{font,size,attributes},image}
+constant dlIDENT     = 1,
+            dliTYPE      = 1,
+             dltCAT   = 1,
+             dltGROUP = 2,
+             dltITEM  = 3,
+            dliIDENT = 2,
+         dlTEXT      = 2,
+         dlHINT      = 3,
+         dlTEXTALIGN = 4,
+            ALIGNLEFT   = 1,
+            ALIGNRIGHT  = 2,
+            ALIGNCENTER = 3,
+         dlINDENT     = 5,
+         dlTEXTINDENT = 6, --relative to indent
+         dlTEXTFONT   = 7,
+            tfFONT     = 1,
+            tfSIZE     = 2,
+            tfATTRIBS  = 3,
+            tfCOLOR    = 4,
+         dlIMAGE      = 8,
+         dlSELECTED   = 9
+constant BLANK_DISPLAYLINE = {{0,""},"","",ALIGNLEFT,0,0,{"arial",12,Normal,0},0,0}
+DisplayList = {}
+
+sequence ScrollOffset --by how much has the roster been scrolled?
+ScrollOffset = {}
+
+sequence Selection --{ident,ident,...}
+Selection = {}
+
+sequence Events --{ItemDoubleClick,ItemRightClick}
+Events = {}
+global constant CTLROSTER_EVENT_ITEMDOUBLECLICK = 1,
+                CTLROSTER_EVENT_ITEMRIGHTCLICK  = 2,
+                CTLROSTER_EVENT_MOVE            = 3
+constant BLANK_EVENTS = {-1,-1,-1}
+
+sequence Locked
+Locked = {}
+
+sequence ScrollBar
+ScrollBar = {}
+
+-- ItemHeight is the height of the largest item
+sequence ItemHeight
+ItemHeight = {}
+
+--END INSTANCE UNIQUE VARS---------------
+
+atom MouseIsDown -- boolean
+MouseIsDown = 0
+atom MouseDownBlock --The block on the roster the mouse was in when the button was pressed down
+MouseDownBlock = 0
+
+--BEGIN GLOBAL SETTING VARS----------------
+object   CatAlignment,
+         GroupAlignment,
+         ItemAlignment,
+         CatIndent,
+         GroupIndent,
+         ItemIndent,
+         CatFontAttribs,
+         GroupFontAttribs,
+         ItemFontAttribs,
+         SelectionBackColor
+         
+CatAlignment        = ALIGNCENTER
+GroupAlignment      = ALIGNLEFT
+ItemAlignment       = ALIGNLEFT
+CatIndent           = 0
+GroupIndent         = 0
+ItemIndent          = 16
+CatFontAttribs      = Bold
+GroupFontAttribs    = Italic
+ItemFontAttribs     = Normal
+SelectionBackColor  = rgb(0,0,255)
+
+--END GLOBAL SETTING VARS------------------
+
+--how did i live without this function? :)
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+function GetAreaPosition(integer winid, sequence area)
+    sequence pos
+    pos = skinx_GetAreaRect(winid,area)
+    return pos[1..2]
+end function
+
+function GetRelMousePos(integer index)
+    return getMousePos()-(GetAreaPosition(WinID[index],RosterArea[index])+getClientPoint(WinID[index],-1,-1))
+end function
+
+function split(sequence s,atom delimiter)
+    atom loc
+    sequence ret
+    ret = {}
+    loc = find(delimiter,s)
+    while loc != 0 do
+        ret = append(ret,s[1..loc-1])
+        s = s[loc+1..length(s)]
+        loc = find(delimiter,s)
+    end while
+    if length(s) != 0 then
+        ret = append(ret,s)
+    end if
+    return ret
+end function
+
+function unsplit(sequence s,atom delimiter)
+    sequence ret
+    if length(s) = 0 then
+        return ""
+    else
+        ret = ""
+        for i = 1 to length(s)-1 do
+            ret &= s[i]&";"
+        end for
+        return ret&s[length(s)]
+    end if
+end function
+
+procedure LoadCollapsedStates(integer index)
+    sequence CollapsedGroups,CollapsedCats
+    
+    CollapsedGroups = split(settings_Get("Roster","CollapsedGroups"),';')
+    for i = length(CollapsedGroups) to 1 by -1 do
+        CollapsedGroups[i] = split(CollapsedGroups[i],'~')
+        if length(CollapsedGroups[i]) < 2 then
+            CollapsedGroups = CollapsedGroups[1..i-1]&CollapsedGroups[i+1..length(CollapsedGroups)]
+        elsif length(CollapsedGroups[i]) > 2 then
+            for n = 3 to length(CollapsedGroups[i]) do
+                CollapsedGroups[i][2] &= "~"&CollapsedGroups[i][n]
+            end for
+            CollapsedGroups[i] = CollapsedGroups[i][1..2]
+        end if
+    end for
+    for i = 1 to length(Groups[index]) do
+        Groups[index][i][gCOLLAPSED] = {}
+        for n = 1 to length(CollapsedGroups) do
+            if equal(CollapsedGroups[n][2],Groups[index][i][gNAME]) then
+                Groups[index][i][gCOLLAPSED] = append(Groups[index][i][gCOLLAPSED],CollapsedGroups[n][1])
+            end if
+        end for
+    end for
+    CollapsedCats = split(settings_Get("Roster","CollapsedCats"),';')
+    for i = 1 to length(Cats[index]) do
+        Cats[index][i][cEXPANDED] = (find(Cats[index][i][cNAME],CollapsedCats) = 0)
+    end for
+end procedure
+
+--Go's through the Cats removing ones that no longer exist and adding ones which do :)
+procedure UpdateCats(integer index)
+    sequence temp
+    integer loc
+    for i = length(Cats[index]) to 1 by -1 do
+        if not sub_find(Cats[index][i][cNAME],Items[index],iCAT) then
+            Cats[index] = Cats[index][1..i-1]&Cats[index][i+1..length(Cats[index])]
+        end if
+    end for
+    for i = 1 to length(Items[index]) do
+        if not sub_find(Items[index][i][iCAT],Cats[index],cNAME) then
+            Cats[index] = append(Cats[index],BLANK_CAT)
+            Cats[index][length(Cats[index])][cNAME] = Items[index][i][iCAT]
+        end if      
+    end for
+    --TODO: sort correctly
+    --TEMPORARY METHOD:
+    temp = Cats[index]
+    Cats[index] = {}
+    for i = 1 to length(CATS) do
+        loc = sub_find(CATS[i],temp,cNAME)
+        if loc then
+            Cats[index] = append(Cats[index],temp[loc])
+            temp = temp[1..loc-1] & temp[loc+1..length(temp)]
+        end if
+    end for
+    Cats[index] &= temp
+end procedure
+
+function CaseInsensitive(sequence s1,sequence s2)
+    return compare(lower(s1),lower(s2))
+end function
+
+--Go's through the Groups removing ones that no longer exist and adding ones which do :)
+procedure UpdateGroups(integer index)
+    for i = length(Groups[index]) to 1 by -1 do
+        if not sub_find(Groups[index][i][gNAME],Items[index],iGROUP) then
+            Groups[index] = Groups[index][1..i-1]&Groups[index][i+1..length(Groups[index])]
+        end if
+    end for
+    for i = 1 to length(Items[index]) do
+        if not sub_find(Items[index][i][iGROUP],Groups[index],gNAME) then
+            Groups[index] = append(Groups[index],BLANK_GROUP)
+            Groups[index][length(Groups[index])][gNAME] = Items[index][i][iGROUP]
+        end if      
+    end for
+    Groups[index] = custom_sort(routine_id("CaseInsensitive"),Groups[index])
+end procedure
+
+function CountItems(integer index, object cat, object group)
+    atom c
+    c = 0
+    for i = 1 to length(Items[index]) do
+        if (equal(Items[index][i][iCAT],cat) or atom(cat)) and (equal(Items[index][i][iGROUP],group) or atom(group)) then
+            c += 1
+        end if
+    end for
+    return c
+end function
+
+function GetMaxResourceDimensions(sequence Resources)
+    sequence MaxSize,Size
+    atom Resource
+    MaxSize = {0,0}
+    for i = 1 to length(Resources) do
+        Resource = skinx_GetResource(Resources[i])
+        if Resource != 0 then
+            Size = getCtlSize(Resource)
+            if Size[1] > MaxSize[1] then
+                MaxSize[1] = Size[1]
+            end if
+            if Size[2] > MaxSize[2] then
+                MaxSize[2] = Size[2]
+            end if
+        end if
+    end for
+    return MaxSize
+end function
+
+constant GDI32 = open_dll("gdi32")
+constant GetTextCharacterExtra = define_c_func(GDI32,"GetTextCharacterExtra",{C_POINTER},C_ULONG)
+
+function GetCellHeight(integer index, sequence Font, atom FontSize)
+    atom size
+    setFont(WinID[index],Font,FontSize,0)
+    size = getFontMetric(WinID[index],tmHeight)-getFontMetric(WinID[index],tmExternalLeading )--getFontMetric(WinID[index],tmInternalLeading )
+    return size --maxheight
+end function
+
+function MakeDisplayList(integer index)
+    sequence displaylist
+    sequence ItemIconSize,GroupIconSize
+    atom temp
+    atom cur
+
+    displaylist = {}
+    UpdateCats(index)
+    UpdateGroups(index)
+    
+    LoadCollapsedStates(index)
+    
+    -- Get indents from icon sizes so that icons do not overlap text
+    -- First find the max size of the item and group icons
+    ItemIconSize = GetMaxResourceDimensions({"Roster/Item/offline","Roster/Item/available","Roster/Item/chat","Roster/Item/away","Roster/Item/xa","Roster/Item/dnd"})
+    GroupIconSize = GetMaxResourceDimensions({"Roster/Group/Collapsed","Roster/Group/Expanded"})
+    
+    -- Now get the Item height
+    ItemHeight[index] = ItemIconSize[2]+1
+    if GroupIconSize[2]+1 > ItemHeight[index] then
+        ItemHeight[index] = GroupIconSize[2]+1
+    end if
+    temp = GetCellHeight(index,settings_Get("Roster","ItemFont"),settings_Get("Roster","ItemFontSize"))
+    if temp > ItemHeight[index] then
+        ItemHeight[index] = temp
+    end if
+    temp = GetCellHeight(index,settings_Get("Roster","ItemFont"),settings_Get("Roster","ItemFontSize"))
+    if temp > ItemHeight[index] then
+        ItemHeight[index] = temp
+    end if   
+    temp = GetCellHeight(index,settings_Get("Roster","ItemFont"),settings_Get("Roster","ItemFontSize"))
+    if temp > ItemHeight[index] then
+        ItemHeight[index] = temp
+    end if  
+    
+    Items[index] = custom_sort(routine_id("CaseInsensitive"),Items[index])
+
+    for c = 1 to length(Cats[index]) do
+        displaylist = append(displaylist,BLANK_DISPLAYLINE)
+        cur = length(displaylist)
+        displaylist[cur][dlIDENT][dliTYPE]   = dltCAT
+        displaylist[cur][dlIDENT][dliIDENT] = Cats[index][c][cNAME]
+        displaylist[cur][dlTEXT]     = Cats[index][c][cNAME]
+        displaylist[cur][dlTEXTALIGN] = CatAlignment
+        displaylist[cur][dlINDENT]    = CatIndent
+        displaylist[cur][dlTEXTINDENT]= 0
+        displaylist[cur][dlTEXTFONT]  = {settings_Get("Roster","ItemFont"),settings_Get("Roster","ItemFontSize"),CatFontAttribs,settings_Get("Roster","ItemColor")}
+        if Cats[index][c][cEXPANDED] then
+            displaylist[cur][dlIMAGE]     = 0--skinx_GetResource("Roster/Cat/Expanded")
+            for g = 1 to length(Groups[index]) do
+                if not find(Cats[index][c][cNAME],NO_GROUPS) and
+                   ((CountItems(index,Cats[index][c][cNAME],Groups[index][g][gNAME]) or settings_Get("Roster","ShowEmptyGroups")) and length(Groups[index][g][gNAME]) > 0) then
+                    --The group itself has not been shown yet, since we now know it should be lets add it
+                    displaylist = append(displaylist,BLANK_DISPLAYLINE)
+                    cur = length(displaylist)
+                    displaylist[cur][dlIDENT][dliTYPE]   = dltGROUP
+                    displaylist[cur][dlIDENT][dliIDENT] = Groups[index][g][gNAME]
+                    displaylist[cur][dlTEXT]     = Groups[index][g][gNAME]
+                    displaylist[cur][dlTEXTALIGN] = GroupAlignment
+                    displaylist[cur][dlINDENT]    = GroupIndent
+                    displaylist[cur][dlTEXTINDENT]= GroupIconSize[1] + 1
+                    displaylist[cur][dlTEXTFONT]  = {settings_Get("Roster","ItemFont"),settings_Get("Roster","ItemFontSize"),GroupFontAttribs,settings_Get("Roster","ItemColor")}
+                    if find(Cats[index][c][cNAME],Groups[index][g][gCOLLAPSED]) then
+                        displaylist[cur][dlIMAGE]     = skinx_GetResource("Roster/Group/Collapsed")
+                    else
+                        displaylist[cur][dlIMAGE]     = skinx_GetResource("Roster/Group/Expanded")
+                    end if
+                    if (settings_Get("Roster","OpenGroupItemCount") and not find(Cats[index][c][cNAME],Groups[index][g][gCOLLAPSED])) or
+                       (settings_Get("Roster","ClosedGroupItemCount") and find(Cats[index][c][cNAME],Groups[index][g][gCOLLAPSED])) then
+                        displaylist[cur][dlTEXT] &= sprintf(" (%d/%d)",{CountItems(index,Cats[index][c][cNAME],Groups[index][g][gNAME]),CountItems(index,0,Groups[index][g][gNAME])})
+                    end if
+                end if
+                if not find(Cats[index][c][cNAME],Groups[index][g][gCOLLAPSED]) then
+                    for i = 1 to length(Items[index]) do
+                        if equal(Items[index][i][iGROUP],Groups[index][g][gNAME]) and equal(Items[index][i][iCAT],Cats[index][c][cNAME]) then
+                            --This item is in the cat and group
+                            --now add the item
+                            displaylist = append(displaylist,BLANK_DISPLAYLINE)
+                            cur = length(displaylist)
+                            displaylist[cur][dlIDENT][dliTYPE]   = dltITEM
+                            displaylist[cur][dlIDENT][dliIDENT] = Items[index][i][iIDENT]
+                            displaylist[cur][dlTEXT]     = Items[index][i][iTEXT]
+                            displaylist[cur][dlHINT]     = Items[index][i][iHINT]
+                            displaylist[cur][dlTEXTALIGN] = ItemAlignment
+                            if length(Groups[index][g][gNAME]) > 0 then
+                                displaylist[cur][dlINDENT]    = ItemIndent
+                            else
+                                displaylist[cur][dlINDENT]    = GroupIndent
+                            end if
+                            displaylist[cur][dlTEXTINDENT]= ItemIconSize[1] + 1
+                            displaylist[cur][dlTEXTFONT]  = {settings_Get("Roster","ItemFont"),settings_Get("Roster","ItemFontSize"),ItemFontAttribs,settings_Get("Roster","ItemColor")}
+                            displaylist[cur][dlIMAGE]     = skinx_GetResource(Items[index][i][iIMAGE])
+                            displaylist[cur][dlSELECTED]  = find(displaylist[cur][dlIDENT],Selection[index])!=0
+                        end if
+                    end for
+                end if
+            end for
+        else
+            displaylist[cur][dlIMAGE]     = 0 --skinx_GetResource("Roster/Cat/Collapsed")
+        end if
+    end for
+    return displaylist
+end function
+
+procedure DisplayItem(integer index,sequence displayitem, atom ypos)
+    sequence size,imagesize,textsize,textpos,text
+    atom imagevoffset
+    
+    size = getCtlSize(Buffer[index])
+    --Erase the previous occupant of this space
+    if displayitem[dlSELECTED] then
+        setPenColor( Buffer[index],SelectionBackColor) 
+        drawRectangle( Buffer[index], True,0, ypos, size[1], ypos+ItemHeight[index] )
+    --else
+    --    setPenColor( Buffer[index],settings_Get("Roster","BackgroundColor")) --255,0,255 is the transparent color
+    end if
+    --Draw the image
+    if displayitem[dlIMAGE] != 0 then
+        imagesize = getCtlSize(displayitem[dlIMAGE])
+        imagevoffset = floor((ItemHeight[index]/2)-(imagesize[2]/2))
+        windraw_transBlt(Buffer[index],displayitem[dlINDENT]+1,imagevoffset+ypos,displayitem[dlIMAGE])
+    end if
+    --Draw the text
+    setFont(Buffer[index],displayitem[dlTEXTFONT][tfFONT],displayitem[dlTEXTFONT][tfSIZE],displayitem[dlTEXTFONT][tfATTRIBS])
+    if displayitem[dlSELECTED] then
+        setTextColor(Buffer[index],xor_bits(displayitem[dlTEXTFONT][tfCOLOR],#FFFFFF))
+    else
+        setTextColor(Buffer[index],displayitem[dlTEXTFONT][tfCOLOR])
+    end if
+    text = displayitem[dlTEXT]
+    textsize = getTextExtent(Buffer[index],displayitem[dlTEXT])
+    textpos = {0,floor(ypos + ((ItemHeight[index]/2)-(textsize[2]/2)))}
+    if displayitem[dlTEXTALIGN] = ALIGNRIGHT then
+        textpos[1] = size[1]-displayitem[dlTEXTINDENT]-textsize[1]
+    elsif displayitem[dlTEXTALIGN] = ALIGNCENTER then
+        textpos[1] = floor(((displayitem[dlINDENT]+displayitem[dlTEXTINDENT])+(size[1]-(displayitem[dlINDENT]+displayitem[dlTEXTINDENT]))/2)-textsize[1]/2)
+    else --ALIGNLEFT
+        textpos[1] = displayitem[dlINDENT]+displayitem[dlTEXTINDENT]
+    end if
+    textpos[1] += 1
+    text = displayitem[dlTEXT]
+    while textsize[1]+textpos[1] > size[1] and length(text) > 0 do
+        text = text[1..length(text)-1]
+        textsize = getTextExtent(Buffer[index],text)
+    end while
+    setPenPos(Buffer[index],textpos[1],textpos[2])  
+    wPuts(Buffer[index],text)
+end procedure
+
+--Should only be called when u realy want to refresh the whole thing
+global procedure ctlroster_Refresh(integer index)
+    sequence size,sbbsize,sbgsize
+    atom sbg,tempbuffer
+    sequence newdisplaylist
+    atom showto
+    size = getCtlSize(Buffer[index])
+
+    --fill the buffer with the transparent color
+    setPenColor( Buffer[index],settings_Get("Roster","BackgroundColor")) --255,0,255 is the transparent color
+    drawRectangle( Buffer[index], True, 0, 0, size[1], size[2] )
+    
+
+    newdisplaylist = MakeDisplayList(index)
+    if ScrollOffset[index] < 1 then ScrollOffset[index] = 1 end if
+    if ScrollOffset[index] > length(newdisplaylist) then ScrollOffset[index] = length(newdisplaylist) end if
+    showto = floor(ScrollOffset[index])+floor((size[2]/ItemHeight[index])+1)
+    if showto > length(newdisplaylist) then showto = length(newdisplaylist) end if
+    --Now we need to display the roster from ScrollOffset to showto
+    if  length(newdisplaylist) != 0 then
+        for i = floor(ScrollOffset[index]) to showto do
+            --if length(DisplayList[index]) < i or not equal(DisplayList[index][i],newdisplaylist[i]) then
+                DisplayItem(index,newdisplaylist[i],(i-floor(ScrollOffset[index]))*ItemHeight[index])
+            --end if
+        end for
+    end if 
+    --skinx_RefreshArea(WinID[index],RosterArea[index])
+end procedure
+
+procedure UpdateRoster(integer index,sequence newdisplaylist)
+    atom scrolloffset
+    sequence size
+    size = getCtlSize(Buffer[index])
+    --If the scrolloffset is right at the top then IMHO it's nice to keep it there as this is the position in which it would normaly be left
+    if length(DisplayList[index]) = 0 or ScrollOffset[index] = 1 then
+        scrolloffset = 1
+    else
+        scrolloffset = sub_find(DisplayList[index][floor(ScrollOffset[index])][dlIDENT],newdisplaylist,dlIDENT)
+    end if
+    if scrolloffset = 0 then scrolloffset = 1 end if 
+    if floor(ScrollOffset[index]) = 0 then ScrollOffset[index] = 1 end if
+    
+    --erase anything that is now bellow the bottom of the last roster item
+    if (length(newdisplaylist) - scrolloffset +1) * ItemHeight[index] < size[2] then
+        setPenColor( Buffer[index],settings_Get("Roster","BackgroundColor"))
+        drawRectangle( Buffer[index], True, 0, (length(newdisplaylist) - scrolloffset +1)*ItemHeight[index], size[1], size[2])
+    end if
+    
+    for i = 1 to floor((size[2]/ItemHeight[index])+1) do
+        if i+scrolloffset-1 > length(newdisplaylist) then
+            exit
+        end if
+        
+        -- If this item is different from the item that previously ocupied this location or if this location was below the last item before
+        if i+floor(ScrollOffset[index])-1 > length(DisplayList[index]) or
+           not equal(DisplayList[index][i+floor(ScrollOffset[index])-1],newdisplaylist[i+scrolloffset-1]) then
+            setPenColor( Buffer[index],settings_Get("Roster","BackgroundColor")) --255,0,255 is the transparent color
+            drawRectangle( Buffer[index], True, 0, (i-1)*ItemHeight[index], size[1], (i)*ItemHeight[index] )
+            DisplayItem(index,newdisplaylist[i+scrolloffset-1],(i-1)*ItemHeight[index])
+        end if
+    end for
+    DisplayList[index] = newdisplaylist
+    ScrollOffset[index] = scrolloffset
+    skinx_RefreshArea(WinID[index],RosterArea[index])
+    if length(DisplayList[index]) > 0 then
+        ctlvscrollbar_SetRange(ScrollBar[index],{1,length(DisplayList[index])})
+        ctlvscrollbar_SetPosition(ScrollBar[index],scrolloffset)
+    end if
+end procedure
+
+procedure RosterSettingChanged()
+    for i = 1 to length(WinID) do
+        UpdateRoster(i,MakeDisplayList(i))
+    end for
+end procedure
+settings_NotifyOnChange("Roster","ShowEmptyGroups",routine_id("RosterSettingChanged"))
+settings_NotifyOnChange("Roster","OpenGroupItemCount",routine_id("RosterSettingChanged"))
+settings_NotifyOnChange("Roster","ClosedGroupItemCount",routine_id("RosterSettingChanged"))
+settings_NotifyOnChange("Roster","ItemFont",routine_id("RosterSettingChanged"))
+settings_NotifyOnChange("Roster","ItemFontSize",routine_id("RosterSettingChanged"))
+settings_NotifyOnChange("Roster","ItemColor",routine_id("RosterSettingChanged"))
+settings_NotifyOnChange("Roster","BackgroundColor",routine_id("RosterSettingChanged"))
+
+global procedure ctlroster_UpdateItem(integer index, sequence ident, sequence text, sequence hint, sequence cat, sequence group, sequence image)
+    atom loc
+    sequence updated
+    --Find the item
+    loc = sub_find(ident,Items[index],iIDENT)
+    if loc = 0 then
+        --Item does not allready exist, create it
+        --Place it into the correct place so that the list remains sorted
+        for i = 1 to length(Items[index])+1 do
+            if i = length(Items[index])+1 then --yes, it's bad programing style, but i'm tired and it works :)
+                Items[index] = append(Items[index],BLANK_ITEM)
+                loc = i
+                exit
+            end if
+            if compare(text,Items[index][i][iTEXT]) = -1 then
+                Items[index] = Items[index][1..i-1]&{BLANK_ITEM}&Items[index][i..length(Items[index])]
+                loc = i
+                exit
+            end if
+        end for
+    end if
+    
+    updated = BLANK_ITEM
+    updated[iIDENT] = ident
+    updated[iTEXT]  = text
+    updated[iHINT]  = hint
+    updated[iCAT]   = cat
+    updated[iGROUP] = group
+    updated[iIMAGE] = image
+    
+    --See if anything has actualy changed, we don't want to bother updating if nothing has changed
+    if not equal(updated,Items[index][loc]) then
+        Items[index][loc] = updated
+        --rebuld the displaylist and update the roster
+        if not Locked[index] then
+            UpdateRoster(index,MakeDisplayList(index))
+        end if
+    end if
+end procedure
+
+global procedure ctlroster_LockUpdate(integer index) --for use while adding or updating a large amount of items
+    Locked[index] = 1
+end procedure
+
+global procedure ctlroster_UnlockUpdate(integer index) --unlocks updating, the whole roster must then be refreshed
+    Locked[index] = 0
+    UpdateRoster(index,MakeDisplayList(index))
+    --ctlroster_Refresh(index)
+end procedure
+
+global procedure ctlroster_DeleteItem(integer index, sequence ident)
+    atom loc
+    loc = sub_find(ident,Items[index],iIDENT)
+    if loc != 0 then
+        Items[index] = Items[index][1..loc-1]&Items[index][loc+1..length(Items[index])]
+    end if
+    --rebuld the displaylist and update the roster
+    UpdateRoster(index,MakeDisplayList(index))
+end procedure
+
+global procedure ctlroster_EraseItems(integer index)
+    Items[index] = {}
+    UpdateRoster(index,MakeDisplayList(index))
+end procedure
+
+
+procedure ChangeScroll(atom index,atom scrolloffset)
+    atom dif
+    sequence size
+    if    scrolloffset < 1 then scrolloffset = 1
+    elsif floor(scrolloffset) > length(DisplayList[index]) then scrolloffset = length(DisplayList[index]) end if
+    dif = floor(scrolloffset - floor(ScrollOffset[index]))
+    
+    ScrollOffset[index] = scrolloffset
+    DisplayList[index] = MakeDisplayList(index)
+    size = getCtlSize(Buffer[index])
+    --ctlroster_Refresh(index)
+    if dif < 0 then
+        --scroll up, list moves down
+        dif = -dif
+        winddraw_bitBlt(Buffer[index],
+               0,(dif)*ItemHeight[index],
+               Buffer[index],
+               0,0,
+               size[1],size[2]-dif*ItemHeight[index],
+               SRCCOPY)
+        
+        setPenColor( Buffer[index],settings_Get("Roster","BackgroundColor"))
+        drawRectangle( Buffer[index], True, 0, 0, size[1], dif*ItemHeight[index] ) 
+        if floor(ScrollOffset[index]) <= length(DisplayList[index]) then
+            for i = 1 to floor(dif) do
+                DisplayItem(index,DisplayList[index][i+floor(ScrollOffset[index])-1],(i-1)*ItemHeight[index])
+            end for     
+        end if
+    elsif dif > 0 then
+        --scroll down, list moves up
+        winddraw_bitBlt(Buffer[index],
+               0,0,
+               Buffer[index],
+               0,dif*ItemHeight[index],
+               size[1],size[2]-dif*ItemHeight[index],
+               SRCCOPY)
+
+        setPenColor( Buffer[index],settings_Get("Roster","BackgroundColor"))
+        drawRectangle( Buffer[index], True, 0, size[2]-dif*ItemHeight[index], size[1], size[2] )
+        for i = floor(((size[2]-dif*ItemHeight[index])/ItemHeight[index])+1) to floor((size[2]/ItemHeight[index])+1) do
+            if i+floor(ScrollOffset[index])-1 > length(DisplayList[index]) then
+                exit
+            end if
+            DisplayItem(index,DisplayList[index][i+floor(ScrollOffset[index])-1],(i-1)*ItemHeight[index])
+        end for
+    end if
+
+    skinx_RefreshArea(WinID[index],RosterArea[index])
+end procedure
+
+global procedure ctlroster_Scroll(atom index, atom offset)
+    ctlvscrollbar_SetPosition(ScrollBar[index],ScrollOffset[index]+offset)
+end procedure
+
+procedure onresize(integer pixmap, atom x, atom y) --new size of the area
+    ctlroster_Refresh(find(pixmap,Buffer))
+end procedure
+
+procedure SaveCollapsedStates(integer index)
+    atom loc
+    sequence CollapsedGroups,CollapsedCats
+    CollapsedGroups = ""
+    for i = 1 to length(Groups[index]) do
+        for n = 1 to length(Groups[index][i][gCOLLAPSED]) do
+            CollapsedGroups &= Groups[index][i][gCOLLAPSED][n] & "~" & Groups[index][i][gNAME] & ";"
+        end for
+    end for
+    if length(CollapsedGroups) > 0 then
+        CollapsedGroups = CollapsedGroups[1..length(CollapsedGroups)-1]
+    end if
+    settings_Save("Roster","CollapsedGroups",CollapsedGroups)
+    
+    CollapsedCats = split(settings_Get("Roster","CollapsedCats"),';')
+    for i = 1 to length(Cats[index]) do
+        loc = find(Cats[index][i][cNAME],CollapsedCats)
+        if not Cats[index][i][cEXPANDED] then
+            if loc = 0 then
+                CollapsedCats = append(CollapsedCats,Cats[index][i][cNAME])
+            end if
+        else
+            if loc != 0 then
+                CollapsedCats = CollapsedCats[1..loc-1]&CollapsedCats[loc+1..length(CollapsedCats)]
+            end if
+        end if
+    end for
+    settings_Save("Roster","CollapsedCats",unsplit(CollapsedCats,';'))
+end procedure
+
+function GetGroupFromBlock(atom index,atom block)
+    for i = block to 1 by -1 do
+        if DisplayList[index][i][dlIDENT][dliTYPE] = dltGROUP then
+            return DisplayList[index][i][dlIDENT][dliIDENT]
+        elsif    DisplayList[index][i][dlIDENT][dliTYPE] = dltCAT   then
+            --If this is a cat heading then this item is not in a group
+            return ""
+        end if
+    end for
+    return -1
+end function
+
+procedure onmouse(integer pixmap, atom event, atom x, atom y, atom shift) --coords relative to the area
+    atom index
+
+    --atom up,down,mover,movervpos
+    --sequence size,upsize,downsize,moversize
+    
+    atom block
+    
+    atom loc,catloc
+    object temp
+    
+    sequence MousePos
+    object NewMousePos
+    
+    index = RevFind(pixmap,Buffer)
+    --size      = getCtlSize(Buffer[index])   
+      
+    --find out which block it's in, then we can lookup what item is there
+    block =floor(floor(y/ItemHeight[index])+ScrollOffset[index])
+    if block > length(DisplayList[index]) or block = 0 then
+        --unselected or whatever
+        if event = LeftDown then
+            Selection[index] = {}
+        end if
+    else
+        --any existant block
+        if MouseIsDown then
+            if event = LeftUp then
+                --Check if item has been moved
+                temp = GetGroupFromBlock(index,block)
+                if sequence(temp) and not equal(GetGroupFromBlock(index,MouseDownBlock),temp) then
+                    if Events[index][CTLROSTER_EVENT_MOVE] != -1 then
+                        call_proc(Events[index][CTLROSTER_EVENT_MOVE],{temp})
+                    end if
+                end if
+
+                --Check if item has been clicked on (in which case it should be set as the only selected item)                
+                if not and_bits(ControlMask ,shift) and not and_bits(ShiftMask,shift) then
+                    if MouseDownBlock = block then
+                        --On mousedown any other selected items will not have been deselected which is generaly what the user wants when they click on an item
+                        Selection[index] = {DisplayList[index][block][dlIDENT]}
+                        UpdateRoster(index,MakeDisplayList(index))
+                    end if
+                end if
+            elsif event = MouseMove then
+                MousePos = GetRelMousePos(index)
+                temp = getCtlSize(Buffer[index])
+                if MousePos[2] < ItemHeight[index] then
+                    --Mouse is held down and at the top of the roster
+                    MousePos = getMousePos()
+                    ctlvscrollbar_SetPosition(ScrollBar[index],ctlvscrollbar_GetPosition(ScrollBar[index])-3)   
+                    NewMousePos = (GetAreaPosition(WinID[index],RosterArea[index])+getClientPoint(WinID[index],-1,-1))
+                    NewMousePos = NewMousePos[2]+ItemHeight[index]
+                    if MousePos[2] < NewMousePos and ScrollOffset[index] != 1 then 
+                        setPointerPos({MousePos[1],NewMousePos})
+                    end if
+                elsif MousePos[2] > temp[2]-ItemHeight[index] then
+                    --Mouse is held down and at the bottom of the roster   
+                    MousePos = getMousePos()
+                    ctlvscrollbar_SetPosition(ScrollBar[index],ctlvscrollbar_GetPosition(ScrollBar[index])+3)   
+                    NewMousePos = (GetAreaPosition(WinID[index],RosterArea[index])+getClientPoint(WinID[index],-1,-1))
+                    NewMousePos = NewMousePos[2]+temp[2]-ItemHeight[index]
+                    if MousePos[2] > NewMousePos then 
+                        setPointerPos({MousePos[1],NewMousePos})
+                    end if                    
+                end if
+            end if
+        else
+            --per type
+            if    DisplayList[index][block][dlIDENT][dliTYPE] = dltCAT   then
+                if event = LeftDown then
+                    loc = sub_find(DisplayList[index][block][dlIDENT][dliIDENT],Cats[index],cNAME)
+                    Cats[index][loc][cEXPANDED] = not Cats[index][loc][cEXPANDED] 
+                    Selection[index] = {} --best to clear selections, could get tricky if we didn't
+                    SaveCollapsedStates(index)
+                    UpdateRoster(index,MakeDisplayList(index))
+                end if
+            elsif DisplayList[index][block][dlIDENT][dliTYPE] = dltGROUP then
+                if event = LeftDown then
+                    loc = sub_find(DisplayList[index][block][dlIDENT][dliIDENT],Groups[index],gNAME)
+                    
+                    --Find the cat this group is in
+                    for i = block to 1 by -1 do
+                        if DisplayList[index][i][dlIDENT][dliTYPE] = dltCAT then
+                            --Toggle the collapsed status for this cat
+                            catloc = sub_find(DisplayList[index][i][dlIDENT][dliIDENT],Cats[index],cNAME)
+                            temp = find(Cats[index][catloc][cNAME],Groups[index][loc][gCOLLAPSED])
+                            if temp then
+                                --It's allready collapsed, expand it by removing the cat from the collapsed list
+                                Groups[index][loc][gCOLLAPSED] = Groups[index][loc][gCOLLAPSED][1..temp-1]&Groups[index][loc][gCOLLAPSED][temp+1..length(Groups[index][loc][gCOLLAPSED])]
+                            else
+                                Groups[index][loc][gCOLLAPSED] = append(Groups[index][loc][gCOLLAPSED],Cats[index][catloc][cNAME])
+                            end if
+                            exit
+                        end if
+                    end for                    
+                    Selection[index] = {} --best to clear selections, could get tricky if we didn't
+                    SaveCollapsedStates(index)
+                    UpdateRoster(index,MakeDisplayList(index))
+                end if
+            elsif DisplayList[index][block][dlIDENT][dliTYPE] = dltITEM  then
+                if event = LeftDown then
+                    if and_bits(ShiftMask,shift) then
+                        if length(Selection[index]) = 0 then
+                            Selection[index] = {DisplayList[index][block][dlIDENT]}
+                        else
+                            loc = sub_find(Selection[index][length(Selection[index])],DisplayList[index],dlIDENT)
+                            if loc < block then
+                                temp = 1
+                            else
+                                temp = -1
+                            end if
+                            for i = loc to block by temp do
+                                if not find(DisplayList[index][i][dlIDENT],Selection[index]) then --could be going either way so loc-1 wouldn't work
+                                    Selection[index] = append(Selection[index] ,DisplayList[index][i][dlIDENT])
+                                end if
+                            end for
+                        end if
+                    elsif and_bits(ControlMask ,shift) then
+                        loc = find(DisplayList[index][block][dlIDENT],Selection[index])
+                        if loc = 0 then
+                            Selection[index] = append(Selection[index] ,DisplayList[index][block][dlIDENT])
+                        else
+                            Selection[index] = Selection[index][1..loc-1]&Selection[index][loc+1..length(Selection[index])]
+                        end if
+                    else
+                        --if item is allready select others might also be selected and the user my be wanting to drag them all at once so we should wait for mouseup to deselect the others
+                        if not find(DisplayList[index][block][dlIDENT],Selection[index]) then
+                            Selection[index] = {DisplayList[index][block][dlIDENT]}
+                        end if
+                    end if
+                    UpdateRoster(index,MakeDisplayList(index))
+
+                    MouseIsDown = 1
+                    MouseDownBlock = block
+                    skinx_CaptureMouse(WinID[index],RosterArea[index])
+                elsif event = LeftDoubleClick then
+                    Selection[index] = {DisplayList[index][block][dlIDENT]}
+                    UpdateRoster(index,MakeDisplayList(index))
+                    if Events[index][CTLROSTER_EVENT_ITEMDOUBLECLICK] != -1 then
+                        call_proc(Events[index][CTLROSTER_EVENT_ITEMDOUBLECLICK],{})
+                    end if
+                elsif event = RightUp then
+                    loc = find(DisplayList[index][block][dlIDENT],Selection[index])
+                    if loc = 0 then
+                        Selection[index] = {DisplayList[index][block][dlIDENT]} --append(Selection[index] ,DisplayList[index][block][dlIDENT])
+                    else
+                        Selection[index] = Selection[index][1..loc-1]&Selection[index][loc+1..length(Selection[index])]
+                        Selection[index] = append(Selection[index] ,DisplayList[index][block][dlIDENT])
+                    end if
+                    UpdateRoster(index,MakeDisplayList(index))
+                    if Events[index][CTLROSTER_EVENT_ITEMRIGHTCLICK] != -1 then
+                        call_proc(Events[index][CTLROSTER_EVENT_ITEMRIGHTCLICK],{})
+                    end if --Events[index][CTLROSTER_EVENT_ITEMRIGHTCLICK] != -1 then
+                elsif event = MouseMove then
+                    skinx_SetHint(WinID[index],DisplayList[index][block][dlHINT])
+                end if --event = LeftDown then
+            end if --DisplayList[index][block][dlIDENT][dliTYPE] = dltITEM  then
+            
+        end if --MouseDownOn end if
+    end if --block > length(DisplayList[index]) then
+    
+    
+    --whereever
+    if event = LeftUp then
+        MouseIsDown = 0
+        skinx_ReleaseMouse()
+    end if
+
+end procedure
+
+global function ctlroster_GetSelected(integer index)
+    sequence ret
+    ret = {}
+    for i = 1 to length(Selection[index]) do
+        if Selection[index][i][dliTYPE] = dltITEM then
+            ret = append(ret,Selection[index][i][dliIDENT])
+        end if
+    end for
+    return ret
+end function
+
+global procedure ctlroster_SetSelected(integer index, sequence Idents)
+    atom loc
+    sequence size
+    Selection[index] = {}
+    if not MouseIsDown then
+        for i = 1 to length(Idents) do
+            if sub_find({dltITEM,Idents},DisplayList[index],dlIDENT) then
+                Selection[index] = append(Selection[index],{dltITEM,Idents})
+            end if
+        end for
+        
+        --Check the first selected item is visible
+        if length(Selection[index]) > 0 then
+            loc = sub_find(Selection[index][1],DisplayList[index],dlIDENT)
+            size = getCtlSize(Buffer[index])
+            if ScrollOffset[index] > loc then
+                ChangeScroll(index,loc)
+            elsif (ScrollOffset[index]+(size[2]/ItemHeight[index]))-1 < loc then
+                ChangeScroll(index,loc-(size[2]/ItemHeight[index])+2)
+            end if
+        end if
+        
+        UpdateRoster(index,MakeDisplayList(index))
+    end if
+end procedure
+
+--If shift is one than previously selected items are not unselected
+global procedure ctlroster_MoveSelection(integer index, integer offset)
+    atom loc,above,below
+     
+    --Find currently selected item
+    if length(Selection[index]) = 0 then
+        loc = 0
+    else
+        loc = sub_find(Selection[index][1],DisplayList[index],dlIDENT)
+    end if
+    
+    loc = loc + offset
+    
+    --Check that the new location is not a negative or zero or more than the maximum
+    if loc < 1 then
+        loc = 1
+    elsif loc > length(DisplayList[index]) then
+        loc = length(DisplayList[index])
+    end if
+    above = 0 below = 0
+    
+    for i = loc to length(DisplayList[index]) do
+        if DisplayList[index][i][dlIDENT][dliTYPE] = dltITEM then
+            below = i
+            exit
+        end if
+    end for
+        
+    for i = loc to 1 by -1 do
+        if DisplayList[index][i][dlIDENT][dliTYPE] = dltITEM then
+            above = i
+            exit
+        end if
+    end for
+    
+    if above + below = 0 then
+        loc = loc - offset --don't move selection
+    elsif (offset > 0 or above = 0) and below != 0 then
+        loc = below
+    else
+        loc = above
+    end if
+
+    --Set the new selection
+    ctlroster_SetSelected(index,DisplayList[index][loc][dlIDENT][dliIDENT])
+end procedure
+
+global procedure ctlroster_SetEventHandler(atom index,atom event,atom rid)
+    Events[length(Events)][event] = rid
+end procedure
+
+procedure ScrollEvent(atom scrollid)
+    ChangeScroll(find(scrollid,ScrollBar),ctlvscrollbar_GetPosition(scrollid))
+end procedure
+
+procedure KeyDown(atom index, atom KeyCode, atom Shift)
+    if KeyCode = VK_DOWN then
+        ctlroster_MoveSelection(index,1)
+    elsif KeyCode = VK_PAGEDOWN then
+        ctlroster_MoveSelection(index,8)
+    elsif KeyCode = VK_UP then
+        ctlroster_MoveSelection(index,-1)
+    elsif KeyCode = VK_PAGEUP then
+        ctlroster_MoveSelection(index,-8)
+    elsif KeyCode = VK_ENTER then
+        if Events[index][CTLROSTER_EVENT_ITEMDOUBLECLICK] != -1 then
+            call_proc(Events[index][CTLROSTER_EVENT_ITEMDOUBLECLICK],{})
+        end if
+    elsif KeyCode = VK_APPS then --the context menu button
+        if Events[index][CTLROSTER_EVENT_ITEMRIGHTCLICK] != -1 then
+            call_proc(Events[index][CTLROSTER_EVENT_ITEMRIGHTCLICK],{})
+        end if
+    end if
+end procedure
+
+global function ctlroster_Create(atom winid, sequence rosterarea, sequence scrollarea)
+    Items     = append(Items,{})
+    WinID    &= winid
+    RosterArea    = append(RosterArea,rosterarea)
+    DisplayList = append(DisplayList,{})
+    Cats = append(Cats,{})
+    Groups = append(Groups,{})
+    ScrollOffset   &= 1
+    Selection      = append(Selection,{})
+    Events = append(Events,BLANK_EVENTS)
+    Locked &= 0
+    Buffer  &= skinx_TakeoverArea(winid,rosterarea,routine_id("onmouse"),routine_id("onresize"),0)
+    ScrollBar &= ctlvscrollbar_Create(winid,scrollarea,routine_id("ScrollEvent"))
+    ItemHeight &= 0
+    ctlvscrollbar_SetChange(ScrollBar[length(ScrollBar)],{1,8})
+    keys_OnKeyDown(winid,routine_id("KeyDown"),length(Buffer))
+    return length(Buffer)
+end function

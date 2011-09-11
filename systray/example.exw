@@ -1,0 +1,35 @@
+--Systray Example
+--21/November/2001
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+
+without warning
+include win32lib.ew
+include systray.ew
+
+constant Window1 =  
+    create( Window, "Systray.ew example", 0, 0, 0, 200, 100, 0 )
+constant SysTray = systray_Create(Window1)
+systray_SetIcon(SysTray,"test.ico")
+systray_SetTip(SysTray,"Hello world!") --the tool tip shows up when you hover over the icon
+
+procedure onopen()
+    systray_Show(SysTray)
+end procedure
+
+procedure onclose()
+    systray_Hide(SysTray)
+end procedure
+
+procedure onsystray(integer id, atom message)
+    if message= WM_LBUTTONDOWN then
+         if message_box("System tray icon left-clicked!","Systray.ew example",0) then end if
+    elsif message= WM_RBUTTONDOWN then
+        if message_box("System tray icon right-clicked!","Systray.ew example",0) then end if
+    end if
+end procedure
+systray_SetEvent(SysTray,routine_id("onsystray"))
+
+onOpen[Window1] = routine_id("onopen")
+onClose[Window1] = routine_id("onclose")
+WinMain( Window1, Normal )

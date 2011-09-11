@@ -1,0 +1,33 @@
+-- Andtest.exw
+--
+-- Example program demonstrating regions.ew, see readme.txt for (rather basic) instructions
+-- 
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+include win32lib.ew
+include Irregular.ew
+without warning
+
+
+constant ShapedWin = create( Window, "Irregular", 0, Default, Default, 400, 400, 0 )
+
+
+procedure onLoad_ShapedWin()
+	atom Region1,Region2,Region
+	Region1  = CreateEllipticRgn(350,0,100,100)
+	Region2  = CreateEllipticRgn(300,0,100,100)
+	Region = CombineRegionsAND({Region1,Region2})
+	SetWindowRgn(getHandle(ShapedWin),Region)
+end procedure
+
+procedure onClick_ShapedWin()
+	--It's good to have a way to exit if we hide the close button
+	abort(1)
+end procedure
+
+onClick[ ShapedWin ] = routine_id("onClick_ShapedWin")
+onOpen [ ShapedWin ] = routine_id("onLoad_ShapedWin" )
+
+WinMain( ShapedWin, Normal )
+

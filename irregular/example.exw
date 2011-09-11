@@ -1,0 +1,51 @@
+-- Example.exw 14 Jan 2001
+--
+-- Example program demonstrating regions.ew, see readme.txt for (rather basic) instructions
+-- 
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+include win32lib.ew
+include Irregular.ew
+without warning
+
+
+constant ShapedWin = create( Window, "Irregular", 0, Default, Default, 400, 400, 0 )
+
+
+procedure onLoad_ShapedWin()
+	atom Region1,Region2,Region3,Region4,Region
+	
+	--The rounded rectangle in the top left corner
+	Region1 = CreateRoundRectRgn(0,0,100,100,30)
+	
+	--The circle on the top right corner
+	Region2  = CreateEllipticRgn(300,0,100,100)
+	
+	--The big triangle
+	Region3 = CreatePolygonRgn({{200,0},{0,400},{400,400}})
+	
+	--The E cut out of the triangle
+	Region4 = CreatePolygonRgn({{160,160},{160,285},{235,285},{235,260},{185,260},{185,235},{210,235},{210,210},{185,210},{185,185},{235,185},{235,160}})
+	
+	--CombineRegions() will return a region made up of the other regions passed to it, it will then delete the passed regions
+	Region = CombineRegions({Region1,Region3})
+	Region = CombineRegions({Region,Region2})
+	--Ok, we now have a triangle with a cirlce and rounded rectanle on either side of it, now cut out an E in it
+	--CutRegion() cuts it's second argument out of it's first argument, it then deletes the second region
+	Region = CutRegion(Region,Region4)
+	
+	--Now all that needs to be done is assoiating the created region with the window
+	SetWindowRgn(getHandle(ShapedWin),Region)
+end procedure
+
+procedure onClick_ShapedWin()
+	--It's good to have a way to exit if we hide the close button
+	abort(1)
+end procedure
+
+onClick[ ShapedWin ] = routine_id("onClick_ShapedWin")
+onOpen [ ShapedWin ] = routine_id("onLoad_ShapedWin" )
+
+WinMain( ShapedWin, Normal )
+

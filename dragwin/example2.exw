@@ -1,0 +1,97 @@
+--example2.exw
+--Slightly less basic example for dragwin.ew: Also demonstrates resizing
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+--23/March/2001
+--http://www.rat-software.com/projects.html
+
+without warning
+include win32lib.ew
+include dragwin.ew
+
+constant Win     = create( Window, "", 0, 0, 0, 500, 300, {WS_DLGFRAME , WS_POPUP}),
+         Caption = create( LText, "Window can be moved and resized.", Win, 20,20, 170, 15, 0),
+         Exit    = create( PushButton, "Exit!",Win,20,40,100,20,0)
+    
+
+procedure Win_onMouse(atom event,atom x, atom y, atom shift)
+	sequence WinSize
+	if event = LeftDown then
+		WinSize = getClientRect(Win)
+		WinSize = {WinSize[3]-WinSize[1],WinSize[4]-WinSize[2]} --The size of the client area
+		--Check where the mouse is, if it's on one of the borders or corners then do a resize else do a move
+		if x < 16 and y > WinSize[2]-16 then
+			--bottom-left corner
+			dragwin_BeginResize(Win,                 --id of the window being resized
+								dragwin_BOTTOMLEFT,  --this indicates where the it's being resized from
+								{220,85},			 --Minimum dimensions
+								{600,600})           --Maximum dimensions
+		elsif x > WinSize[1]-16 and y > WinSize[2]-16 then
+			--bottom-right corner
+			dragwin_BeginResize(Win,                 --id of the window being resized
+						        dragwin_BOTTOMRIGHT, --this indicates where the it's being resized from
+						        {220,85},			 --Minimum dimensions
+						        {600,600})           --Maximum dimensions
+		elsif x < 16 and y < 16 then
+			--top-right corner
+			dragwin_BeginResize(Win,                 --id of the window being resized
+						        dragwin_TOPLEFT,     --this indicates where the it's being resized from
+						        {220,85},			 --Minimum dimensions
+						        {600,600})           --Maximum dimensions			
+		elsif x > WinSize[1]-16 and y < 16 then
+			--top-right corner
+			dragwin_BeginResize(Win,                 --id of the window being resized
+						        dragwin_TOPRIGHT,    --this indicates where the it's being resized from
+						        {220,85},			 --Minimum dimensions
+						        {600,600})           --Maximum dimensions	
+		elsif y < 16 then
+			--top border
+			dragwin_BeginResize(Win,                 --id of the window being resized
+						        dragwin_TOP,         --this indicates where the it's being resized from
+						        {220,85},			 --Minimum dimensions
+						        {600,600})           --Maximum dimensions				
+		elsif y > WinSize[2]-16 then
+			--bottom border
+			dragwin_BeginResize(Win,                 --id of the window being resized
+						        dragwin_BOTTOM,      --this indicates where the it's being resized from
+						        {220,85},			 --Minimum dimensions
+						        {600,600})           --Maximum dimensions	
+		elsif x < 16 then
+			--left border
+			dragwin_BeginResize(Win,                 --id of the window being resized
+						        dragwin_LEFT,        --this indicates where the it's being resized from
+						        {220,85},			 --Minimum dimensions
+						        {600,600})           --Maximum dimensions							        
+		elsif x > WinSize[1]-16 then
+			--left border
+			dragwin_BeginResize(Win,                 --id of the window being resized
+						        dragwin_RIGHT,       --this indicates where the it's being resized from
+						        {220,85},			 --Minimum dimensions
+						        {600,600})           --Maximum dimensions							        
+		else
+			--center
+			dragwin_BeginMove(Win)
+		end if
+	end if
+end procedure
+
+procedure Win_onPaint(atom x1, atom y1, atom x2, atom y2)
+	sequence ClientRect
+	ClientRect = getClientRect(Win)
+	--Draw a border rectangle and resize boxes
+	drawLine(Win,0,16,ClientRect[3],16)                             --Top
+	drawLine(Win,0,ClientRect[4]-16,ClientRect[3],ClientRect[4]-16) --Bottom
+	drawLine(Win,16,0,16,ClientRect[4])                             --Left
+	drawLine(Win,ClientRect[3]-16,0,ClientRect[3]-16,ClientRect[4]) --Left
+end procedure
+
+procedure Exit_onClick()
+	closeWindow(Win)
+end procedure
+
+onClick[Exit] = routine_id("Exit_onClick")
+onPaint[Win]  = routine_id("Win_onPaint")
+onMouse[Win]  = routine_id("Win_onMouse")
+
+WinMain( Win, Normal )
+

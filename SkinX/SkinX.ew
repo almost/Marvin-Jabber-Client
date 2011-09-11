@@ -1,0 +1,2563 @@
+--SKINX.EW
+--Skinning library
+--Thomas Parslow (PatRat)
+--tom@almostobsolete.net
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+without warning
+
+include eebax.e
+include xmltree.e
+include image.e
+include get.e
+include win32lib.ew
+include dragwin.ew
+include irregular.ew
+include pic_load.e
+include windraw.ew
+include file.e
+include skinxfile.ew
+include loadbitmap.ew
+
+--EVENTS
+--Event handle interface:
+--(atom window(id),sequence area(name),sequence event(name),object params)
+--
+--onleftclick
+--onrightclick
+
+
+constant SKIN_DIR     ="skins"
+
+global constant SKINX_INFO_DISPLAYNAME = 1,
+                SKINX_INFO_DESCRIPTION = 2,
+                SKINX_INFO_AUTHOR      = 4,
+                SKINX_INFO_EMAIL       = 5,
+                SKINX_INFO_WEB         = 6,
+
+                SKINX_BLANK_INFO       = {"","","","","",""}
+
+
+constant DEFAULT_ICON = w32Func(xLoadIcon,{instance(),acquire_mem ( 0,"exw")})
+
+--INTERNAL SKIN FORMAT:
+sequence CurrentSkin
+--Name of the current skin
+---------------------------
+sequence About
+--Information about the skin (such as author, displayname ect...)
+---------------------------
+sequence Images
+--{{Name,Reference,Transparent},...}
+constant iNAME  = 1,
+         iIMAGE = 2,
+         iTRANS = 3
+---------------------------
+sequence Areas
+--{{Name,id,parent,dimensions,image{normalimage,hoverimage,mousedownimage},hint(tooltip),text{text,halign,valign,font,size,color},color,type{Type,Subtype},
+--events{onleftclick,onrightclick},Cutouts,Menu{left,right}(name),SubAreas}}
+--SubAreas is a sequence of indexes to areas
+constant aNAME       = 1,
+         aID         = 2, --It's location in Areas
+         aPARENT     = 3, --The untransformed parent
+         aRECT       = 4,
+         aIMAGES     = 5, --0 is none
+         aSTATES     = 6, --{{name,images},{name,images},...}
+         aHINT       = 7,
+         aTEXT       = 8,
+         aCOLOR      = 9,
+         aTYPE       = 10,
+         aEVENTS     = 11,
+         aCUTOUTS    = 12,
+         aMENU       = 13,
+         aAREAS      = 14
+--Rect:
+constant rLEFT       = 1,
+         rTOP        = 2,
+         rRIGHT      = 3,
+         rBOTTOM     = 4
+--Images
+constant iNORMAL     = 1,
+         iHOVER      = 2,
+         iDOWN       = 3,
+         iFOCUS      = 4,
+         BLANK_IMAGES = {0,0,0,0},
+         
+         
+         iDEFAULT    = -1 --iFOCUS if there is an iFOCUS and the window has focus otherwise iNORMAL
+         
+--States
+constant stNAME       = 1,
+         stIMAGES     = 2 --See images above
+         
+--Events
+constant eONLEFTCLICK    = 1,
+         eONRIGHTCLICK   = 2
+
+--Cutouts
+constant cTYPE       = 1,
+          cPOLYGON = 1,
+         cPOINTS     = 2
+constant BLANK_CUTOUT = {"",{}}
+--Text
+constant tTEXT       = 1,
+         tHALIGN     = 2, --center,left,right
+         tVALIGN     = 3, --middle,top,bottom
+         tFONT       = 4,
+         tSIZE       = 5,
+         tCOLOR      = 6
+--Menu
+constant mLEFT  = 1,
+         mRIGHT = 2
+
+constant BLANK_AREA   = {"",0,0,{"","","",""},BLANK_IMAGES,{},"",{"","","","",0,0},-1,{"",""},{"",""},{},{"",""},{}}
+---------------------------
+sequence wClasses
+--{{Name,Attributes{caption,icon},{{minx,miny},{maxx,maxy}},Areas},...}
+--Areas is an atom pointing to the top level area
+constant wNAME       = 1,
+         wBOUNDS     = 2,
+         wAREA       = 3
+         
+constant bMIN        = 1,
+         bMAX        = 2
+constant BLANK_CLASS = {"",{{0,0},{0,0}},0}
+---------------------------
+sequence Resources
+--{{name,resource(image or icon)}...}
+constant rNAME     = 1,
+         rIMAGE    = 2,
+         rVALUE    = 3
+constant BLANK_RESOURCE = {"",0}
+---------------------------
+sequence Menus
+--{{name,items{{name,caption,event,subitems}},...},...}
+constant mNAME  = 1,
+         mITEMS = 2,
+          miNAME     = 1,
+          miCAPTION  = 2,
+          miEVENT    = 3,
+          miSUBITEMS = 4
+constant BLANK_MENU     = {"",{}}
+constant BLANK_MENUITEM = {"","","",{}}
+---------------------------
+sequence OpenWindows
+OpenWindows = {}
+--{{Win32LibID,Class,controls{{controlid,areaname}..},{mousedownrects,hoverrects},Area,CustomerAreas{AreaName,events{mouse,click,resize},
+--buffer,overlay(should this be drawn on top of all the areas sub areas)},EventHandler,Panes{{name,position},..},CurrentMenu,Buffer},...}
+--Buffer is a Pixmap, this means the window only needs to be properly redrawn on resize
+constant oID           = 1,
+         oCLASS        = 2,
+         oCONTROLS     = 3, --native controls
+          cID     = 1,
+          cAREA   = 2,
+         oCHANGEDRECTS = 4,
+          cDOWN   = 1,
+          cHOVER  = 2,
+         oAREA         = 5,
+         oCUSTOMAREAS  = 6, ---Areas that have been taken over by the host program
+          caAREA    = 1,
+          caEVENTS  = 2,
+           eONMOUSE  = 1,  --(integer pixmapid, atom event, atom x, atom y, atom shift) --coords relative to the area
+           eONRESIZE = 2,  --(integer pixmapid, atom x, atom y) --new size of the area
+          caBUFFER  = 3,
+          caTRANSPARENT = 4,
+         BLANK_CUSTOMAREA = {"",{-1,-1},0,0},
+         oEVENTHANDLER = 7,
+         oPANES        = 8, --never access this directly, use GetPaneList() instead, otherwise there will be problems if the skin is changed and it has different panes
+          pID       = 1,   --ID is the id of the parent area, seems logical enough ;)
+          pPOSITION = 2,   --represented as the percentage size of the top or left pane
+          pDIRECTION= 3,
+           pdUPDOWN    = 1,
+           pdLEFTRIGHT = 2,
+         BLANK_PANE = {-1,50,pdUPDOWN},
+         oFOCUS        = 9,
+         oLOCALTEXTVARS     = 10, --{Name,Text} variable values for substitution into text strings, see alow TextVars for global variables
+         oCURSTATES    = 11,
+         oCURRENTMENU  = 12, --{AreaName,CurState} Here instead of in the areas structure so that it remains persistant between resizes
+          cmNAME    = 1,
+          cmID      = 2, --win32lib id of menu, so it can be destroyed
+          cmITEMS   = 3, --sequence of {name,id,event} pairs
+            --cmNAME    = 1,
+            --cmID      = 2,
+            cmEVENT     = 3,
+         BLANK_CURRENTMENU = {"",0,{}},
+         oHINT         = 13,
+         oCURSOR       = 14,
+         oBUFFER       = 15
+constant BLANK_OPENWINDOW = {0,"",{},{{},{}},{},{},-1,{},0,{},{},0,"",ArrowPointer,0}
+
+sequence ClosedWindows --reusing of windows has been disabled cos I think it was causing problems
+ClosedWindows = {}
+--sequence of IDs of windows that have been closed, to be reused
+---------------------------
+sequence TextVars
+TextVars = {}
+--TextVars stores values for substitution into text strings (containing "$variablename$" substrings)
+--See also oLOCALTEXTVARS member of OpenWindows (local values will be checked first)
+constant tvNAME = 1,
+         tvVALUE = 2
+
+---------------------------
+sequence SavedPositions
+SavedPositions = {{},{}}
+--SavedPositions stores window and pane sizes and positions, is saved and loaded from file between runs of the programs
+--{{Windowname,rect,panes},..}
+constant sNAME      = 1,
+         sPOS       = 2,
+         sPANES     = 3, --{{Panename,pos},...}
+         --sNAME      = 1,
+         --sPOS       = 2
+         BLANK_SAVED_POSITION = {"",{0,0,0,0},{}}
+---------------------------
+
+--Mouse flags
+atom MouseLeftDown,MouseRightDown
+MouseLeftDown  = 0
+MouseRightDown = 0
+sequence MouseLeftDownPos,MouseRightDownPos
+MouseLeftDownPos  = {0,0}
+MouseRightDownPos = {0,0}
+object MouseLeftDownAreas
+MouseLeftDownAreas = {}
+
+object MouseCapture --The area wich has captured the mouse (captureMouse will be used to constrain it to the correct window)
+MouseCapture = 0
+
+-- Fixed version of the function of the same name in win32lib
+-- peek4u changed to peek4s to work with negative mouse coords in multimonitor systems
+object VOID
+function getPointerPos()
+    atom tmpMem
+    sequence xy
+
+    tmpMem = acquire_mem(0, 8)
+
+    VOID = w32Func(xGetCursorPos,{tmpMem})
+
+    xy = peek4s({tmpMem, 2})
+
+    release_mem( tmpMem)
+
+    return xy
+end function
+
+--how did i live without this function?:)
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+function val(sequence string)
+    sequence ret
+    ret = value(string)
+    return ret[2]
+end function
+
+procedure RemoveMenu(integer id)
+    --Destroy any menu this window may still have
+    atom win
+    win = sub_find(id,OpenWindows,oID)
+    if win then
+        if sequence(OpenWindows[win][oCURRENTMENU]) then
+            destroy(OpenWindows[win][oCURRENTMENU][cmID])
+            for i = 1 to length(OpenWindows[win][oCURRENTMENU][cmITEMS]) do
+                destroy(OpenWindows[win][oCURRENTMENU][cmITEMS][i][cmID])
+            end for
+        end if      
+    end if
+end procedure
+
+OpenWindows = {}
+Images = {}
+global procedure skinx_UnloadSkin()
+    About      = {}
+    for i = 1 to length(Images) do
+        if atom(Images[i][iIMAGE]) then
+            deleteObject(Images[i][iIMAGE])
+        end if
+    end for
+    Images     = {}
+    wClasses   = {}
+    Areas      = {}
+    Resources  = {}
+    Menus      = {}
+    for i = 1 to length(OpenWindows) do
+        RemoveMenu(OpenWindows[i][oID])
+    end for
+end procedure
+
+function LoadImage(sequence name)
+    atom idx,fn
+    object junk,image
+    idx = sub_find(name,Images,iNAME)
+    
+    if idx != 0 then
+        return idx
+    else
+        --is it an icon (this will be determined by name)
+        if length(name) > 3 and equal(name[length(name)-3..length(name)],".ico") then
+            --just stick the filename in, setIcon can be used
+            --TODO HERE
+            --Images = append(Images,{name,Path&name,0})
+        else
+            image = skinxfile_Read(SKIN_DIR,CurrentSkin,name)
+            if atom(image) then
+                return 0
+            end if
+            
+            if length(image) > 3 and equal(image[1..3],"GIF") then
+                image = read_gif_from_seq(image)
+                if atom(image) then
+                    return 0
+                end if
+                Images = append(Images,{name,createDIB(image),0})
+            else --Assume BMP
+                image = loadbitmap_LoadFromSeq(image)
+                if image = 0 then
+                    return 0
+                end if
+                Images = append(Images,{name,image,0})
+            end if
+        end if
+        return length(Images)
+    end if
+end function
+
+object LastFocusRectPosition
+LastFocusRectPosition = 0
+procedure DrawFilledFocusRect(atom x1, atom y1, atom x2, atom y2)
+    dragwin_DrawFilledFocusRect(x1,y1,x2,y2)
+    if sequence(LastFocusRectPosition) then
+        dragwin_DrawFilledFocusRect(LastFocusRectPosition[1],LastFocusRectPosition[2],LastFocusRectPosition[3],LastFocusRectPosition[4])
+    end if
+    LastFocusRectPosition = {x1,y1,x2,y2}
+end procedure
+
+procedure EraseFilledFocusRect()
+    if sequence(LastFocusRectPosition) then
+        dragwin_DrawFilledFocusRect(LastFocusRectPosition[1],LastFocusRectPosition[2],LastFocusRectPosition[3],LastFocusRectPosition[4])
+        LastFocusRectPosition = 0
+    end if  
+end procedure
+
+-------------------------------
+constant WHITESPACE =  {9,10,13,32}
+function ltrim(sequence s)
+    -- discard leading whitespace of sequence s
+    for i = 1 to length(s) do
+        if not find(s[i], WHITESPACE) then  return s[i..length(s)] end if
+    end for
+    return {}
+end function
+
+function rtrim(sequence s)
+    -- discard trailing whitespace of sequence s
+    for i = length(s) to 1 by -1 do
+        if not find(s[i], WHITESPACE) then  return s[1..i] end if
+    end for
+    return {}
+end function
+
+function trim(sequence s)
+    -- discard leading and trailing whitespace of sequence s
+    return ltrim(rtrim(s))
+end function
+
+--find any element of fnd in in
+function find_any(sequence fnd,sequence in)
+    for i = 1 to length(in) do
+        if find(in[i],fnd) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+--start is only used for width and height positions, it is the value of the left or top position
+--len is the apropriate length, either height or width
+function eval_pos(sequence expr, integer start, integer len)
+    sequence operand
+    atom operator,rel
+    object val
+    atom pos
+    atom total
+    total = 0   
+
+    while length(expr) != 0 do
+        --get the operator, if there is no operator then assume +
+        if find(expr[1],"-+*/") then
+            if length(expr) < 2 then
+                exit
+            end if
+            operator = expr[1]
+            expr = expr[2..length(expr)]
+        else
+            operator = '+'
+        end if
+
+        --now get the operand
+        pos = find_any("-+*/",expr)
+        if pos = 0 then
+            pos = length(expr)+1
+        end if
+        operand = upper(expr[1..pos-1])
+        expr = expr[pos..length(expr)]
+        if find(operand[1],"TLBR") then
+            rel = operand[1]
+            operand = operand[2..length(operand)]
+        else
+            rel = 'X'
+        end if
+        if operand[length(operand)] = '%' then
+            operand = operand[1..length(operand)-1]
+            val = value(operand)
+            val = val[2]
+            val = (val/100) * len
+        else
+            val = value(operand)
+            val = val[2]
+        end if
+        if rel = 'B' or rel = 'R' then
+            val = len - val
+        elsif rel = 'X' then
+            val = val+start
+        end if
+        if    operator = '+' then
+            total = total + val
+        elsif operator = '-' then
+            total = total - val
+        elsif operator = '*' then
+            total = total * val
+        elsif operator = '/' then
+            total = total / val
+        end if
+    end while
+    return floor(total)
+end function
+
+--Transform an areas relative positions into absolute postions, sub areas in a tranformed area are stored within the sequence (not by reference)
+--function TransformArea(object area,integer top, integer left, integer height, integer width)
+function TransformArea(object area,integer left, integer top, integer width, integer height,sequence panes)
+    atom loc
+    
+    if atom(area) then
+        area = Areas[area]
+    end if
+    area[aRECT][rLEFT]   = eval_pos(area[aRECT][rLEFT]  ,0                       ,width ) + left
+    area[aRECT][rRIGHT]  = eval_pos(area[aRECT][rRIGHT] ,area[aRECT][rLEFT]-left,width ) + left
+    --do cliping
+    if area[aRECT][rRIGHT] > width+left then
+        area[aRECT][rRIGHT] = width+left
+    end if
+    area[aRECT][rTOP]    = eval_pos(area[aRECT][rTOP]   ,0                       ,height) + top
+    area[aRECT][rBOTTOM] = eval_pos(area[aRECT][rBOTTOM],area[aRECT][rTOP]-top ,height) + top
+    --do cliping
+    if area[aRECT][rBOTTOM] > height+top then
+        area[aRECT][rBOTTOM] = height+top
+    end if
+    
+    --if this is a pane then sort it out
+    if equal(area[aTYPE][1],"pane") then
+        if find(area[aTYPE][2],{"top","bottom","left","right"}) then
+            --Sets of panes are identified by they're parent
+            loc = sub_find(area[aPARENT],panes,pID)
+            if loc then
+                area[aRECT][rTOP] = top
+                area[aRECT][rLEFT] = left
+                area[aRECT][rBOTTOM] = height+top
+                area[aRECT][rRIGHT] = width+left
+                if equal(area[aTYPE][2],"top") then
+                    area[aRECT][rBOTTOM] = floor((panes[loc][pPOSITION]/100)*height)+top
+                elsif equal(area[aTYPE][2],"bottom") then
+                    area[aRECT][rTOP] = floor((panes[loc][pPOSITION]/100)*height)+1+top
+                elsif equal(area[aTYPE][2],"left") then
+                    area[aRECT][rRIGHT] = floor((panes[loc][pPOSITION]/100)*width)+left
+                elsif equal(area[aTYPE][2],"right") then
+                    area[aRECT][rLEFT] = floor((panes[loc][pPOSITION]/100)*width)+1+left
+                end if
+            end if
+        end if
+    end if
+    
+    --cut outs
+    for i = 1 to length(area[aCUTOUTS]) do
+        for n = 1 to length(area[aCUTOUTS][i][cPOINTS]) do
+            area[aCUTOUTS][i][cPOINTS][n][1] = eval_pos(area[aCUTOUTS][i][cPOINTS][n][1],0,area[aRECT][rRIGHT]-area[aRECT][rLEFT])  + area[aRECT][rLEFT]
+            area[aCUTOUTS][i][cPOINTS][n][2] = eval_pos(area[aCUTOUTS][i][cPOINTS][n][2],0,area[aRECT][rBOTTOM]-area[aRECT][rTOP]) + area[aRECT][rTOP]
+        end for
+    end for
+    
+    --sub areas
+    for i = 1 to length(area[aAREAS]) do
+        area[aAREAS][i] = TransformArea(Areas[area[aAREAS][i]],area[aRECT][rLEFT],area[aRECT][rTOP],area[aRECT][rRIGHT]-area[aRECT][rLEFT],area[aRECT][rBOTTOM]-area[aRECT][rTOP],panes)
+    end for
+    return area
+end function
+
+function FindTransformedArea_(sequence area, object name,sequence loc)  
+    object ret
+    if length(area) = 0 then
+        return 0
+    end if
+    if (sequence(name) and equal(area[aNAME],name)) or (atom(name) and equal(area[aID],name)) then
+        return loc
+    end if
+    for i = 1 to length(area[aAREAS]) do
+        ret = FindTransformedArea_(area[aAREAS][i],name,loc&i)
+        if sequence(ret) then
+            return ret--loc&i
+        end if
+    end for
+    return 0
+end function
+
+
+--name can be an id
+function FindTransformedArea(sequence area, object name)    
+    object loc
+    loc = FindTransformedArea_(area,name,{})
+    if atom(loc) then return 0 end if
+    for i = length(loc) to 1 by -1 do
+        loc = loc[1..i-1]&aAREAS&loc[i..length(loc)]
+    end for
+    return loc
+end function
+
+function FindArea(atom startarea, sequence name)
+    atom loc
+
+    if equal(Areas[startarea][aNAME],name) then
+        return startarea
+    end if
+    
+    for i = 1 to length(Areas[startarea][aAREAS]) do
+        loc = FindArea(Areas[startarea][aAREAS][i],name)
+        if loc != 0 then
+            return loc
+        end if
+    end for
+    return 0
+end function
+
+function GetSubObject(object s,object loc)
+    if atom(loc) then
+        return -1
+    end if
+    if length(loc) = 0 then
+        return s
+    end if
+    return GetSubObject(s[loc[1]],loc[2..length(loc)])
+end function
+
+function SetSubObject(sequence s,sequence loc,object v)
+    if length(loc) = 0 then
+        return v
+    end if
+    s[loc[1]] = SetSubObject(s[loc[1]],loc[2..length(loc)],v)
+    return s
+end function
+
+function GetPaneList(object id)
+    atom win,class
+    sequence oldpanes,panes
+    atom area
+    atom loc
+    if atom(id) then --param is just a window id
+        win = sub_find(id,OpenWindows,oID)
+        class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+        area = wClasses[class][wAREA]
+        OpenWindows[win][oPANES] =  GetPaneList({id,area})
+        return OpenWindows[win][oPANES]
+    else
+        area = id[2]
+        id = id[1]
+        win = sub_find(id,OpenWindows,oID)
+        class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+    end if
+    
+    oldpanes = OpenWindows[win][oPANES]
+    panes = {}
+    --check if this is a Pane parent (an area which holds 2 panes(other areas))
+    if equal(Areas[area][aTYPE],{"pane","parent"}) then
+        --it is, now, do we know about this one allready?
+        loc = sub_find(area,oldpanes,pID)
+        if loc then
+            --yes? then lets retain all the info we allready know
+            panes = append(panes,oldpanes[loc])
+        else
+            --no? skin must have been changed, w
+            panes = append(panes,BLANK_PANE)
+            panes[length(panes)][pID] = area
+            for i = 1 to length(Areas[area][aAREAS]) do
+                if equal(Areas[Areas[area][aAREAS][i]][aTYPE],{"pane","top"}) or equal(Areas[Areas[area][aAREAS][i]][aTYPE],{"pane","bottom"}) then
+                    panes[length(panes)][pDIRECTION] = pdUPDOWN
+                    exit
+                elsif equal(Areas[Areas[area][aAREAS][i]][aTYPE],{"pane","left"}) or equal(Areas[Areas[area][aAREAS][i]][aTYPE],{"pane","right"}) then
+                    panes[length(panes)][pDIRECTION] = pdLEFTRIGHT
+                    exit
+                end if
+            end for
+        end if
+    end if
+    
+    --now proccess all sub-areas
+    for i = 1 to length(Areas[area][aAREAS]) do
+        panes = panes&GetPaneList({id,Areas[area][aAREAS][i]})
+    end for
+    
+    return panes
+end function
+
+---------------------------------------------------------------
+
+function GetImagesFromArea(atom winid, sequence area)
+    atom loc , win
+    sequence curstate
+    win = sub_find(winid,OpenWindows,oID)
+    
+    loc = sub_find(area[aNAME],OpenWindows[win][oCURSTATES],1)
+    if loc then
+        curstate = OpenWindows[win][oCURSTATES][loc][2]
+        loc = sub_find(curstate,area[aSTATES],stNAME)
+        if loc then
+            return area[aSTATES][loc][stIMAGES]
+        end if
+    end if
+    return area[aIMAGES]
+end function
+
+procedure TileImage(atom dest, object src, atom x1, atom y1, atom x2, atom y2)
+    atom trans
+    trans = 0
+    if sequence(src) then
+        trans = src[iTRANS]
+        src   = src[iIMAGE]
+    end if
+    windraw_TileImage(dest,src,x1,y1,x2,y2,trans)
+end procedure
+
+global function overlap(sequence rect1,sequence rect2) --Rect1 can be a point, rect2 must be a rect
+    if length(rect1) = 2 then --rect1 is in fact a point
+        if rect1[1] > rect2[rLEFT] and rect1[1] < rect2[rRIGHT]  and
+         rect1[2] > rect2[rTOP]  and rect1[2] < rect2[rBOTTOM] then
+            return 1
+        else
+            return 0
+        end if
+    end if
+
+    if rect1[rLEFT] < rect2[rLEFT] then
+        if rect1[rRIGHT] > rect1[rLEFT] then
+            if rect1[rTOP] < rect2[rTOP] then
+                if rect1[rBOTTOM] > rect2[rTOP] then
+                    return 1
+                end if
+            else
+                if rect2[rBOTTOM] > rect1[rTOP] then
+                     return 1
+                end if  
+            end if
+        end if
+    else
+         if rect2[rRIGHT] > rect1[rLEFT] then
+            if rect1[rTOP] < rect2[rTOP] then
+                if rect1[rBOTTOM]> rect2[rTOP] then
+                     return 1
+                end if
+            else
+                if rect2[rBOTTOM] > rect1[rTOP] then
+                     return 1
+                end if
+            end if
+        end if
+    end if
+    return 0 
+end function
+
+global procedure skinx_Repaint(integer id,integer x1, integer y1, integer x2, integer y2)
+    --Normaly called automaticaly but if onPaint event is reassigned elsewhere it must be called explicitly
+    atom win
+    win = sub_find(id,OpenWindows,oID)
+    -- Sometimes repaint gets called as the app is shutting down and skinx has allready removed the window
+    if win != 0 then
+        bitBlt(id,                        --dest
+               x1,y1,                     --dest coords
+               OpenWindows[win][oBUFFER], --source
+               x1,y1,                     --source coords
+               x2,y2,                     --width,height
+               SRCCOPY)                   --raster operation
+    end if
+end procedure 
+
+function GetTextVar(integer winid,sequence name)
+    atom win,loc
+    win = sub_find(winid,OpenWindows,oID)   
+    name = lower(name)
+    
+    --First check local values
+    loc = sub_find(name,OpenWindows[win][oLOCALTEXTVARS],tvNAME)
+    if loc then
+        return OpenWindows[win][oLOCALTEXTVARS][loc][tvVALUE]
+    else
+        --Not found in local values, try global values
+        loc = sub_find(name,TextVars,tvNAME)
+        if loc then
+            return TextVars[loc][tvVALUE]
+        else
+            --Not found anywhere, return nothing
+            return ""
+        end if
+    end if
+end function
+
+function ExpandTextVars(integer winid,sequence text)
+    sequence ret
+    atom win,i
+    win = sub_find(winid,OpenWindows,oID)   
+    
+    ret = ""
+    i = 1
+    while i <= length(text) do
+        if text[i] = '$' then
+            if length(text) < i+1 or text[i+1] = '$' then
+                --Double $ sign, place a dollar sign in the string and move on
+                ret &= '$'
+                i += 2
+            else
+                for n = i+1 to length(text) do
+                    if text[n] = '$' then
+                        --Variable name found, now find it's value
+                        ret &= GetTextVar(winid,text[i+1..n-1])
+                        i = n+1
+                        exit
+                    elsif n = length(text) or text[n] = ' ' then
+                        --Variable names cannot contain spaces and there must be an ending $ sign
+                        ret &= "[TEXT VAR ERROR: no ending \'$\' or space encountered]"
+                        i = n+1
+                        exit
+                    end if
+                end for
+            end if
+        else
+            ret &= text[i]
+            i += 1
+        end if
+    end while
+    return ret
+end function
+
+procedure PaintArea(integer winid, integer dest, sequence area,integer state)
+    sequence r
+    integer s
+    sequence font,textsize,txtpos,areatext
+    atom cloc,win,loc
+    sequence images
+    
+    images = GetImagesFromArea(winid,area)
+    
+    r = area[aRECT]
+    
+    if r[rBOTTOM] - r[rTOP] < 1 or r[rRIGHT] - r[rLEFT]  < 1 then return end if
+    
+    win = sub_find(winid,OpenWindows,oID)   
+    
+    s = state
+    
+    if s = iDEFAULT then
+        if OpenWindows[win][oFOCUS] then
+            s = iFOCUS
+        else
+            s = iNORMAL
+        end if
+    end if
+    
+    if images[s] = 0 then s = iNORMAL end if
+    
+    cloc = sub_find(area[aNAME],OpenWindows[win][oCUSTOMAREAS],caAREA)
+    if cloc and not OpenWindows[win][oCUSTOMAREAS][cloc][caTRANSPARENT] then
+        copyBlt(dest,r[rLEFT],r[rTOP],OpenWindows[win][oCUSTOMAREAS][cloc][caBUFFER])
+    elsif images[s] != 0 then
+        TileImage(dest, Images[images[s]], r[rLEFT], r[rTOP], r[rRIGHT], r[rBOTTOM])
+    elsif area[aCOLOR] != -1 then
+        setPenColor( dest,area[aCOLOR])
+        drawRectangle( dest, True, r[rLEFT], r[rTOP], r[rRIGHT], r[rBOTTOM] )
+    end if
+    
+    --If an area has any text then put the text on it now    
+    areatext = ExpandTextVars(winid,area[aTEXT][tTEXT]) --Replace variable names with there values
+    if length(areatext) then    
+        if equal(area[aTEXT][tFONT],"default") then
+            font = "arial"
+        else
+            font = area[aTEXT][tFONT]
+        end if
+
+        if area[aTEXT][tSIZE] = 0 then
+            area[aTEXT][tSIZE] = 12
+        end if
+
+        setFont(dest,font,area[aTEXT][tSIZE],Normal)
+        setTextAlign(dest,AlignTop)
+        setTextColor(dest,area[aTEXT][tCOLOR])
+        while 1 do
+            textsize = getTextExtent(dest,areatext)
+            if length(areatext) = 0 or textsize[1] <= r[rRIGHT]-r[rLEFT] then exit end if
+            areatext = areatext[1..length(areatext)-1]
+        end while
+        txtpos = {0,0}
+        if equal(area[aTEXT][tHALIGN],"left") then
+            txtpos[1] = r[rLEFT]
+        elsif equal(area[aTEXT][tHALIGN],"right") then
+            txtpos[1] = r[rRIGHT]-textsize[1]
+        else
+            txtpos[1] = (r[rLEFT]+(r[rRIGHT]-r[rLEFT])/2)-(textsize[1]/2)
+        end if
+        if equal(area[aTEXT][tVALIGN],"top") then
+            txtpos[2]  = r[rTOP]
+        elsif equal(area[aTEXT][tVALIGN],"bottom") then
+            txtpos[2]  = r[rBOTTOM]-textsize[2]
+        else
+            txtpos[2] = (r[rBOTTOM]-(textsize[2]/2))-((r[rBOTTOM]-r[rTOP])/2)
+        end if
+        setPenPos(dest,txtpos[1],txtpos[2])
+        wPuts(dest,areatext)
+    end if
+    
+    for i = 1 to length(area[aAREAS]) do
+        PaintArea(winid,dest,area[aAREAS][i],state)
+    end for
+    
+    if cloc and OpenWindows[win][oCUSTOMAREAS][cloc][caTRANSPARENT] then
+        windraw_transBlt(dest,r[rLEFT],r[rTOP],OpenWindows[win][oCUSTOMAREAS][cloc][caBUFFER])
+    end if
+end procedure
+
+procedure ResizeCustomAreas(integer winid, sequence areas)
+    atom win
+    atom width,height
+    object arealoc
+    sequence area
+    sequence CurrentSize
+    win = sub_find(winid,OpenWindows,oID)
+    for i = 1 to length(OpenWindows[win][oCUSTOMAREAS]) do
+        arealoc = FindTransformedArea(areas,OpenWindows[win][oCUSTOMAREAS][i][caAREA])
+        if sequence(arealoc) then
+            area = GetSubObject(areas,arealoc)
+            width  = area[aRECT][rRIGHT]-area[aRECT][rLEFT]
+            height = area[aRECT][rBOTTOM]-area[aRECT][rTOP]
+            if width  < 1 then width  = 1 end if
+            if height < 1 then height = 1 end if
+            -- Check if the custom area is already at the correct size
+            CurrentSize = getRect(OpenWindows[win][oCUSTOMAREAS][i][caBUFFER])
+            if CurrentSize[3]-CurrentSize[1] != width or CurrentSize[4]-CurrentSize[2] != height then
+                setCtlSize(OpenWindows[win][oCUSTOMAREAS][i][caBUFFER],width,height)
+                if OpenWindows[win][oCUSTOMAREAS][i][caEVENTS][eONRESIZE] != -1 then
+                    call_proc(OpenWindows[win][oCUSTOMAREAS][i][caEVENTS][eONRESIZE],
+                     {OpenWindows[win][oCUSTOMAREAS][i][caBUFFER],area[aRECT][rRIGHT]-area[aRECT][rLEFT],area[aRECT][rBOTTOM]-area[aRECT][rTOP]})
+                end if
+            end if
+        end if
+    end for
+end procedure
+
+function FlattenArea(sequence area)
+    sequence ret
+    if length(area) = 0 then
+        return {}
+    elsif length(area[aAREAS]) = 0 then
+        return {area}
+    end if
+
+    ret = {area}
+    ret[1][aAREAS] = {}
+    for i = 1 to length(area[aAREAS]) do
+        ret &= FlattenArea(area[aAREAS][i])
+    end for
+    return ret
+end function
+
+procedure ResizeControls(integer id)
+    sequence fareas,area,r
+    atom win
+    win = sub_find(id,OpenWindows,oID)
+    --class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+    fareas = FlattenArea(OpenWindows[win][oAREA])
+    if length(fareas) = 0 then return end if
+    --go through all the controls on the window resize them to the size of they're parent area
+    for i = 1 to length(OpenWindows[win][oCONTROLS]) do
+        if sub_find(OpenWindows[win][oCONTROLS][i][cAREA],fareas,aNAME) != 0 then
+            area = fareas[sub_find(OpenWindows[win][oCONTROLS][i][cAREA],fareas,aNAME)]
+            r = area[aRECT]
+            setRect(OpenWindows[win][oCONTROLS][i][cID],r[rLEFT],r[rTOP],r[rRIGHT]-r[rLEFT],r[rBOTTOM]-r[rTOP],True)
+            setVisible(OpenWindows[win][oCONTROLS][i][cID],True)
+        else
+            setVisible(OpenWindows[win][oCONTROLS][i][cID],False)
+        end if
+    end for
+end procedure
+
+--Only realy makes sense in the context of custom areas
+--UPDATE: now used for panes
+procedure RefreshArea(integer winid, atom areaid)--sequence area)
+    atom win,RECT
+    sequence r
+    sequence loc,area
+    sequence images  
+    atom cloc
+    
+    win = sub_find(winid,OpenWindows,oID)
+    --PaintArea(winid,OpenWindows[win][oBUFFER],OpenWindows[win][oAREA],iDEFAULT)
+    --PaintArea(winid,OpenWindows[win][oBUFFER],area,iDEFAULT)
+    
+    loc = FindTransformedArea(OpenWindows[win][oAREA],areaid)
+    
+    area = GetSubObject(OpenWindows[win][oAREA],loc)
+    images = GetImagesFromArea(winid,area)
+    r = area[aRECT] --we only need repaint this rect to the client window, although the rest must be painted to the buffer
+    while 1 do
+        if (images[iNORMAL] != 0 or area[aCOLOR] != -1) or length(loc) = 0 then
+            exit
+        end if
+        cloc = sub_find(area[aNAME],OpenWindows[win][oCUSTOMAREAS],caAREA)  
+        if (cloc and not OpenWindows[win][oCUSTOMAREAS][cloc][caTRANSPARENT]) then
+            exit
+        end if
+        loc = loc[1..length(loc)-2]
+        area = GetSubObject(OpenWindows[win][oAREA],loc)
+        images = GetImagesFromArea(winid,area)
+    end while
+    PaintArea(winid,OpenWindows[win][oBUFFER],area,iDEFAULT)
+    --repaintWindow(id)
+
+    --Doing a direct blt to the window can cause an error in Win XP if the workstation is locked, I'll try it this way...
+    RECT = allocate(16)
+    poke4(RECT,r)
+    if w32Func(xInvalidateRect,{getHandle(winid),RECT,0}) then end if
+    free(RECT)
+
+    --bitBlt(winid,                     --dest
+    --       r[rLEFT],r[rTOP],          --dest coords
+    --       OpenWindows[win][oBUFFER], --source
+    --       r[rLEFT],r[rTOP],          --source coords
+    --       r[rRIGHT]-r[rLEFT],r[rBOTTOM]-r[rTOP],--width,height
+    --       SRCCOPY)                   --raster operation
+end procedure
+
+--takes an areaname rather than a transformed area
+--global procedure skinx_RefreshArea(integer winid, sequence areaname)
+--  atom win
+--  object loc
+--  win = sub_find(winid,OpenWindows,oID)
+--  loc = FindTransformedArea(OpenWindows[win][oAREA],areaname)
+--  if sequence(loc) then
+--      RefreshArea(winid,GetSubObject(OpenWindows[win][oAREA],loc))
+--  end if
+--end procedure
+global procedure skinx_RefreshArea(integer winid, object areaname)
+    atom win,class
+    object tloc
+    atom aloc
+    sequence parentrect
+    sequence temp
+    win = sub_find(winid,OpenWindows,oID)
+    if win = 0 then return end if
+    class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+    if class = 0 then return end if
+    
+    tloc = FindTransformedArea(OpenWindows[win][oAREA],areaname)
+    
+    if sequence(areaname) then
+        aloc = FindArea(wClasses[class][wAREA],areaname)
+    else
+        aloc = areaname
+    end if
+    if sequence(tloc) and aloc != 0 then
+        parentrect = GetSubObject(OpenWindows[win][oAREA],FindTransformedArea(OpenWindows[win][oAREA],Areas[aloc][aPARENT]))
+        parentrect = parentrect[aRECT]
+        
+        OpenWindows[win][oAREA] = SetSubObject(OpenWindows[win][oAREA],tloc ,
+        TransformArea(Areas[aloc],parentrect[rLEFT],parentrect[rTOP],parentrect[rRIGHT]-parentrect[rLEFT],parentrect[rBOTTOM]-parentrect[rTOP],GetPaneList(winid)))
+        ResizeCustomAreas(winid,GetSubObject(OpenWindows[win][oAREA],tloc))
+        --RefreshArea(winid,GetSubObject(OpenWindows[win][oAREA],tloc))
+        RefreshArea(winid,GetSubObject(OpenWindows[win][oAREA],tloc&aID))
+    end if
+    --repaintWindow(winid)
+end procedure
+
+
+---------------------------------------------------------------
+
+procedure RaiseEvent(integer id, sequence area, sequence event, object params)
+    atom win
+    win = sub_find(id,OpenWindows,oID)
+    if OpenWindows[win][oEVENTHANDLER] != -1 then call_proc(OpenWindows[win][oEVENTHANDLER],{id,area,event,params}) end if
+end procedure
+
+global procedure skinx_RemoveWindow(integer id)
+    --Remove the window
+    atom i
+    i = sub_find(id,OpenWindows,oID)
+    if i then
+        --I think reusing window is causing some problems
+        --ClosedWindows &= id
+        
+        destroy(OpenWindows[i][oBUFFER])
+        for n = 1 to length(OpenWindows[i][oCUSTOMAREAS]) do
+            destroy(OpenWindows[i][oCUSTOMAREAS][n][caBUFFER])
+        end for
+        for n = 1 to length(OpenWindows[i][oCONTROLS]) do
+            destroy(OpenWindows[i][oCONTROLS][n][cID])
+        end for
+        
+        RemoveMenu(id)
+        
+        OpenWindows = OpenWindows[1..i-1]&OpenWindows[i+1..length(OpenWindows)]
+    end if
+end procedure
+
+--Writes the SavedPositions sequence to file
+procedure SavePositions()
+    atom fn
+    fn = open(SKIN_DIR & "\\positions.ini","w")
+    if fn = -1 then return end if
+    print(fn,SavedPositions)
+    close(fn)
+end procedure
+
+--pos is a percentage
+--painid can be the name of the parent area
+global procedure skinx_SetPanePosition(integer winid,object paneid,atom pos)
+    sequence panes
+    atom paneloc
+    atom spwinloc, sppaneloc --savedpositionwindowlocation and savedpositionpanelocation
+    atom win,class
+    win = sub_find(winid,OpenWindows,oID)
+    class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+    if sequence(paneid) then
+        paneid = FindArea(wClasses[class][wAREA],paneid)
+    end if
+    panes = GetPaneList(winid)
+    paneloc = sub_find(paneid,panes,pID)
+    if paneloc then
+        panes[paneloc][pPOSITION] = pos
+        
+        --Save the position
+        --The window should allready be listed, find it
+        spwinloc = sub_find(wClasses[class][wNAME],SavedPositions,sNAME)
+        if spwinloc != 0 then
+            --Now find the pane's saved location
+            sppaneloc = sub_find(Areas[panes[paneloc][pID]][aNAME],SavedPositions[spwinloc][sPANES],sNAME)
+            if sppaneloc = 0 then
+                --Not yet listed, list it
+                SavedPositions[spwinloc][sPANES] = append(SavedPositions[spwinloc][sPANES],0)
+                sppaneloc = length(SavedPositions[spwinloc][sPANES])
+            end if
+            SavedPositions[spwinloc][sPANES][sppaneloc] = {Areas[panes[paneloc][pID]][aNAME],panes[paneloc][pPOSITION]}
+        end if
+        SavePositions()
+        
+        OpenWindows[win][oPANES] = panes
+        skinx_RefreshArea(winid, paneid)
+        ResizeControls(winid)
+    end if
+end procedure
+
+procedure RefreshAreasUsingTextVar(integer winid,sequence area,sequence name)
+    name = lower(name)
+    if match("$"&name&"$",lower(area[aTEXT][tTEXT])) then
+        RefreshArea(winid,area[aID])
+        return
+    end if
+    for i = 1 to length(area[aAREAS]) do
+        RefreshAreasUsingTextVar(winid,area[aAREAS][i],name)
+    end for
+end procedure
+
+--Pass -1 as id to set a global value
+global procedure skinx_SetTextVar(integer id, sequence name, sequence text)
+    atom loc,win
+    
+    --If the variable has been supplied with surrounding dollar signs (as it would apear in text strings) then remove them
+    if name[1] = '$' then
+        name = name[2..length(name)]
+    end if
+    if name[length(name)] = '$' then
+        name = name[1..length(name)-1]
+    end if
+    name = lower(name)
+    
+    if id = -1 then
+        --Set the this value as global (affects all windows)
+        loc = sub_find(name,TextVars,tvNAME)
+        if loc then
+            TextVars[loc][tvVALUE] = text
+        else
+            TextVars = append(TextVars,{name,text})
+        end if
+        --Refresh areas that make use of the variable
+        for i =1 to length(OpenWindows) do
+            RefreshAreasUsingTextVar(id,OpenWindows[i][oAREA],name)
+        end for
+    else
+        --Set this value as local to one window
+        win = sub_find(id,OpenWindows,oID)
+
+        --update the the variable
+        loc = sub_find(name,OpenWindows[win][oLOCALTEXTVARS],tvNAME)
+        if loc then
+            OpenWindows[win][oLOCALTEXTVARS][loc][tvVALUE] = text
+        else
+            OpenWindows[win][oLOCALTEXTVARS] = append(OpenWindows[win][oLOCALTEXTVARS],{name,text})
+        end if
+        --Refresh areas that make use of the variable
+        RefreshAreasUsingTextVar(id,OpenWindows[win][oAREA],name)
+    end if
+end procedure
+
+--Refresh all areas under "area" whose names are equal to "name"
+procedure RefreshAreas(integer winid,sequence area,sequence name)
+    if equal(name,area[aNAME]) then
+        RefreshArea(winid,area[aID])
+        return
+    end if
+    for i = 1 to length(area[aAREAS]) do
+        RefreshAreas(winid,area[aAREAS][i],name)
+    end for
+end procedure
+
+--Set's the state of an area
+global procedure skinx_SetState(integer id, sequence areaname, sequence state)
+    atom win
+    object loc
+    sequence area
+    win = sub_find(id,OpenWindows,oID)
+    if win = 0 then return end if
+    loc = sub_find(areaname,OpenWindows[win][oCURSTATES],1)
+    if loc then
+        if equal(OpenWindows[win][oCURSTATES][loc][2],state) then return end if --no need to do anything if there is no change
+        OpenWindows[win][oCURSTATES][loc][2] = state
+    else
+        OpenWindows[win][oCURSTATES] = append(OpenWindows[win][oCURSTATES],{areaname,state})
+    end if
+    --Refresh the area
+    RefreshAreas(id,OpenWindows[win][oAREA],areaname)
+end procedure
+
+--Can be called from the onmouse event of a control
+global procedure skinx_SetHint(integer id, sequence hint)
+    atom win
+    win = sub_find(id,OpenWindows,oID)
+    if not equal(OpenWindows[win][oHINT],hint) then
+        OpenWindows[win][oHINT] = hint
+        --if manageToolTip(0,0) then end if
+        --setHint(id,hint)
+        --if manageToolTip(1,0) then end if
+    end if
+end procedure
+
+function MakeRegionFromCutouts(sequence area,sequence offset)
+    atom region,regiontmp,width,height
+    --region = CreatePolygonRgn({{0,0},{0,0}})
+    region = 0
+    
+    for i = 1 to length(area[aCUTOUTS]) do
+        area[aCUTOUTS][i][cPOINTS] = area[aCUTOUTS][i][cPOINTS]+repeat(offset,length(area[aCUTOUTS][i][cPOINTS]))
+        if equal(area[aCUTOUTS][i][cTYPE],"polygon") then
+            regiontmp = CreatePolygonRgn( area[aCUTOUTS][i][cPOINTS] )
+        elsif equal(area[aCUTOUTS][i][cTYPE],"roundrect") then
+            --TODO
+        elsif equal(area[aCUTOUTS][i][cTYPE],"elliptic") then
+            width = area[aCUTOUTS][i][cPOINTS][2][1]-area[aCUTOUTS][i][cPOINTS][1][1]
+            height = area[aCUTOUTS][i][cPOINTS][2][2]-area[aCUTOUTS][i][cPOINTS][1][2]
+            regiontmp = CreateEllipticRgn(area[aCUTOUTS][i][cPOINTS][1][1],area[aCUTOUTS][i][cPOINTS][1][2],width,height)
+        end if
+        if region then
+            region = CombineRegions({region,regiontmp})
+        else
+            region = regiontmp
+        end if
+    end for
+    if region then
+        --do clipping
+        regiontmp = CreatePolygonRgn({{area[aRECT][rLEFT],area[aRECT][rTOP]},{area[aRECT][rLEFT],area[aRECT][rBOTTOM]},
+         {area[aRECT][rRIGHT],area[aRECT][rBOTTOM]},{area[aRECT][rRIGHT],area[aRECT][rTOP]}}
+         +{offset,offset,offset,offset})
+        region = CombineRegionsAND({region,regiontmp})
+    end if
+    
+    for i = 1 to length(area[aAREAS]) do
+        regiontmp = MakeRegionFromCutouts(area[aAREAS][i],offset)
+        if regiontmp then
+            if region then
+                region = CombineRegions({regiontmp,region})
+            else
+                region = regiontmp
+            end if
+        end if
+    end for
+    return region
+end function
+
+procedure WindowResized(integer id,atom style, atom x, atom y)
+    --Normaly called automaticaly but if onResize event is reassigned elsewhere it must be called explicitly
+    --sequence area
+    sequence size,clientrect,pos,oldsize
+    
+    sequence winrect
+    
+    atom loc
+    
+    --object arealoc
+    atom win,class
+    atom region
+    --atom width,height
+    win = sub_find(id,OpenWindows,oID)
+    class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+    
+    if style = SIZE_RESTORED then
+        --The region has not been changed yet so the old buffer will fit perfectlys
+        winrect = getClientRect(id)
+        if winrect[3]-winrect[1] < wClasses[class][wBOUNDS][bMIN][1] then
+            winrect = {winrect[1],winrect[2],winrect[1]+wClasses[class][wBOUNDS][bMIN][1],winrect[4]}
+        elsif winrect[3]-winrect[1] > wClasses[class][wBOUNDS][bMAX][1] and wClasses[class][wBOUNDS][bMAX][1]  != 0 then
+            winrect = {winrect[1],winrect[2],winrect[1]+wClasses[class][wBOUNDS][bMAX][1],winrect[4]}
+        end if
+
+        if winrect[4]-winrect[2] < wClasses[class][wBOUNDS][bMIN][2] then
+            winrect = {winrect[1],winrect[2],winrect[3],winrect[2]+wClasses[class][wBOUNDS][bMIN][2]}
+        elsif winrect[4]-winrect[2] > wClasses[class][wBOUNDS][bMAX][2] and wClasses[class][wBOUNDS][bMAX][2] != 0 then
+            winrect = {winrect[1],winrect[2],winrect[3],winrect[2]+wClasses[class][wBOUNDS][bMAX][2]}
+        end if
+        
+        if not equal(getClientRect(id),winrect) then
+            setClientRect(id,winrect[3]-winrect[1],winrect[4]-winrect[2])
+            return
+        end if
+        
+        --Check a change in size has actualy occured
+        if equal(getCtlSize(OpenWindows[win][oBUFFER]),{x,y}) then
+            return
+        end if
+        
+        --Doing a direct blt to the window can cause an error in Win XP if the workstation is locked, I'll try it this way...
+        if w32Func(xInvalidateRect,{getHandle(id),0,0}) then end if
+        
+        --first we need to resize the pixmap to match the window
+        setCtlSize(OpenWindows[win][oBUFFER],x,y)
+        --Now draw the window onto the pixmap
+        size = getClientRect(id)
+        size = size[3..4] 
+        
+        OpenWindows[win][oAREA] = TransformArea(wClasses[class][wAREA],0,0,size[1],size[2],GetPaneList(id))
+        --pos = getPosition(id)
+        ResizeCustomAreas(id,OpenWindows[win][oAREA])
+        
+        PaintArea(id,OpenWindows[win][oBUFFER],OpenWindows[win][oAREA],iDEFAULT)
+        ResizeControls(id)
+        
+        --cut out the border and use cutouts
+        --first cut out the border
+        clientrect = (getClientPoint(id,0,0)-getPosition(id)&getClientPoint(id,0,0)-getPosition(id)) +  getClientRect(id)
+        region = CreatePolygonRgn({clientrect[1..2],{clientrect[3],clientrect[2]},clientrect[3..4],{clientrect[1],clientrect[4]}})
+        
+        --now subtract the cutouts from the region
+        region = CutRegion(region,MakeRegionFromCutouts(OpenWindows[win][oAREA],getClientPoint(id,0,0)-getPosition(id)))
+        
+        
+        --and finaly assign the region to the window
+        SetWindowRgn(getHandle(id),region)
+    end if
+end procedure
+
+global procedure skinx_RefreshWindow(integer id)
+    sequence size,style
+    if not isMinimized(id) and isVisible(id) then
+        size  = getCtlSize(id)
+        WindowResized(id,SIZE_RESTORED,size[1],size[2])
+        repaintWindow(id)
+    end if
+end procedure
+
+procedure Menu_onClick()
+    integer id,loc
+    sequence menuname,itemname
+    id = getSelf()
+    for i = 1 to length(OpenWindows) do
+        if sequence(OpenWindows[i][oCURRENTMENU]) then
+            loc = sub_find(id,OpenWindows[i][oCURRENTMENU][cmITEMS],cmID)
+            if loc then
+                RaiseEvent(OpenWindows[i][oID],OpenWindows[i][oCURRENTMENU][cmITEMS][loc][cmNAME],OpenWindows[i][oCURRENTMENU][cmITEMS][loc][cmEVENT],{})
+                exit
+            end if
+        end if
+    end for
+end procedure
+
+function SetupMenuItems(integer parent,sequence items)
+    sequence ret
+    ret = {}
+    
+    for i = 1 to length(items) do
+        if length(items[i][miSUBITEMS]) then
+            ret = append(ret,{items[i][miNAME],create( Menu, items[i][miCAPTION], parent, 0, 0, 0, 0, 0),items[i][miEVENT]})
+            ret &= SetupMenuItems(ret[length(ret)][2],items[i][miSUBITEMS])
+        else
+            ret = append(ret,{items[i][miNAME],create( MenuItem, items[i][miCAPTION], parent, 0, 0, 0, 0, 0),items[i][miEVENT]})
+            --set the event
+            onClick[ret[length(ret)][2]] = routine_id("Menu_onClick")
+        end if
+    end for
+    return ret
+end function
+
+global procedure skinx_DisplayMenu(integer id, sequence menuname)
+    atom win,menu
+    sequence mousepos
+    win = sub_find(id,OpenWindows,oID)
+    menu = sub_find(lower(menuname),lower(Menus),mNAME)
+    
+    if atom(OpenWindows[win][oCURRENTMENU]) or not equal(OpenWindows[win][oCURRENTMENU][cmNAME],menuname) then
+        RemoveMenu(id)
+
+        OpenWindows[win][oCURRENTMENU] = BLANK_CURRENTMENU
+
+        OpenWindows[win][oCURRENTMENU][cmNAME]  = menuname
+        --must use the menu control as the Popup control does not allow submenus, won't be shown however as it does not have a caption
+        OpenWindows[win][oCURRENTMENU][cmID]    = create( Menu, "", id, 0, 0, 0, 0, 0)
+        OpenWindows[win][oCURRENTMENU][cmITEMS] = SetupMenuItems(OpenWindows[win][oCURRENTMENU][cmID],Menus[menu][mITEMS])
+    end if
+    
+    --Show just above the mouse pointer
+    mousepos = getPointerPos()-4
+    mousepos = ScreenToClient(id,mousepos[1],mousepos[2])
+    popup(OpenWindows[win][oCURRENTMENU][cmID],mousepos[1],mousepos[2])
+end procedure
+
+function HandleMouseForArea(sequence area, integer id, atom event, atom x, atom y, atom shift)
+    sequence r,bounds
+    atom win,class,cloc
+    object bordersize
+    sequence images
+    win = sub_find(id,OpenWindows,oID)
+    class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+    bounds = wClasses[class][wBOUNDS]
+    
+    images = GetImagesFromArea(id,area)
+    
+    --Do visual changes
+    if event = MouseMove or event = LeftDown then
+        if overlap({x,y},area[aRECT]) then
+            if MouseLeftDown and overlap(MouseLeftDownPos,area[aRECT]) then
+                if images[iDOWN] != 0 then
+                    PaintArea(id,id,area,iDOWN)
+                    OpenWindows[win][oCHANGEDRECTS][cDOWN] = append(OpenWindows[win][oCHANGEDRECTS][cDOWN],area[aRECT])
+                end if
+            else
+                if images[iHOVER] != 0 then
+                    PaintArea(id,id,area,iHOVER)
+                    OpenWindows[win][oCHANGEDRECTS][cHOVER] = append(OpenWindows[win][oCHANGEDRECTS][cHOVER],area[aRECT])
+                end if
+            end if
+        end if
+    end if
+    
+    if event = LeftDown then
+        MouseLeftDownAreas &= area[aID]
+    end if
+       
+    --Set the hint
+    if length(area[aHINT]) > 0 then
+        OpenWindows[win][oHINT] = area[aHINT]
+    end if
+    
+    -- Get cursor for this area
+    if equal(area[aTYPE][1] ,"corner") then
+        if equal(area[aTYPE][2] ,"bottomright") then
+            OpenWindows[win][oCURSOR] = SizeNWSEPointer
+        elsif equal(area[aTYPE][2] ,"bottomleft") then
+            OpenWindows[win][oCURSOR] = IDC_SIZENESW
+        elsif equal(area[aTYPE][2] ,"topright") then
+            OpenWindows[win][oCURSOR] = IDC_SIZENESW
+        elsif equal(area[aTYPE][2] ,"topleft") then
+            OpenWindows[win][oCURSOR] = SizeNWSEPointer    
+        end if
+    elsif equal(area[aTYPE][1] ,"border") then 
+        if equal(area[aTYPE][2] ,"left") then
+            OpenWindows[win][oCURSOR] = SizeWEPointer
+        elsif equal(area[aTYPE][2] ,"right") then
+            OpenWindows[win][oCURSOR] = SizeWEPointer
+        elsif equal(area[aTYPE][2] ,"top") then
+            OpenWindows[win][oCURSOR] = SizeNSPointer
+        elsif equal(area[aTYPE][2] ,"bottom") then
+            OpenWindows[win][oCURSOR] = SizeNSPointer
+        end if
+    else
+        OpenWindows[win][oCURSOR] = 0
+    end if
+
+    --Check if any subareas will handle this
+    for i = 1 to length(area[aAREAS]) do 
+        if overlap({x,y},area[aAREAS][i][aRECT]) then
+            if HandleMouseForArea(area[aAREAS][i],id,event,x,y,shift) then
+                return 1
+            else
+                -- Removing the exit bellow alows overlaping areas
+                -- exit
+            end if
+        end if
+    end for
+    
+
+    
+    --Is this a custom area?
+    cloc = sub_find(area[aNAME],OpenWindows[win][oCUSTOMAREAS],caAREA)
+    if cloc != 0 and OpenWindows[win][oCUSTOMAREAS][cloc][caEVENTS][eONMOUSE] != -1 then
+        --To be handled by a custom thingie watsit
+        call_proc(OpenWindows[win][oCUSTOMAREAS][cloc][caEVENTS][eONMOUSE],{OpenWindows[win][oCUSTOMAREAS][cloc][caBUFFER],event,x-area[aRECT][rLEFT],y-area[aRECT][rTOP],shift})
+        return 1
+    end if
+    
+    bordersize = getClientPoint(id,0,0)-getPosition(id)
+    bordersize = bordersize[1]*2
+    bounds = (bounds + bordersize) * {{bounds[bMIN][1]!=0,bounds[bMIN][1]!=0},{bounds[bMAX][1]!=0,bounds[bMAX][1]!=0}}
+    --no areas below this one can handle this event, can this area handle it?
+    if event = LeftUp then
+        if overlap(MouseLeftDownPos,area[aRECT]) then
+            if equal(area[aTYPE][1] ,"close") then
+                closeWindow(id)
+                return 1
+            elsif equal(area[aTYPE][1] ,"min") then
+                showWindow(id,SW_MINIMIZE)
+            end if
+
+            if sequence(area[aEVENTS][eONLEFTCLICK]) and length(area[aEVENTS][eONLEFTCLICK]) then
+                RaiseEvent(id,area[aNAME],area[aEVENTS][eONLEFTCLICK],{})
+                if not length(area[aMENU][mLEFT]) then
+                    return 1
+                end if
+            end if      
+            
+            if length(area[aMENU][mLEFT]) then
+                skinx_DisplayMenu(id,area[aMENU][mLEFT])
+                return 1
+            end if  
+        end if
+    elsif event = RightUp then
+        if overlap(MouseRightDownPos,area[aRECT]) then
+            if sequence(area[aEVENTS][eONRIGHTCLICK]) and length(area[aEVENTS][eONRIGHTCLICK]) then
+                RaiseEvent(id,area[aNAME],area[aEVENTS][eONRIGHTCLICK],{})
+                if not length(area[aMENU][mRIGHT]) then
+                    return 1
+                end if
+            end if
+            if length(area[aMENU][mRIGHT]) then
+                skinx_DisplayMenu(id,area[aMENU][mRIGHT])
+                return 1
+            end if
+        end if
+    elsif event = LeftDown then
+    --elsif event = MouseMove then
+        --if MouseLeftDown and overlap(MouseLeftDownPos,area[aRECT]) then
+            --draging
+            if equal(area[aTYPE][1] ,"drag")  then
+                MouseLeftDown = 0
+                dragwin_BeginMove(id)
+                return 1
+            elsif equal(area[aTYPE][1] ,"corner") then
+                MouseLeftDown = 0
+
+                if equal(area[aTYPE][2] ,"bottomright") then
+                    dragwin_BeginResize(id,dragwin_BOTTOMRIGHT,bounds[bMIN],bounds[bMAX])
+                    return 1
+                elsif equal(area[aTYPE][2] ,"bottomleft") then
+                    dragwin_BeginResize(id,dragwin_BOTTOMLEFT,bounds[bMIN],bounds[bMAX])
+                    return 1
+                elsif equal(area[aTYPE][2] ,"topright") then
+                    dragwin_BeginResize(id,dragwin_TOPRIGHT,bounds[bMIN],bounds[bMAX])
+                    return 1
+                elsif equal(area[aTYPE][2] ,"topleft") then
+                    dragwin_BeginResize(id,dragwin_TOPLEFT,bounds[bMIN],bounds[bMAX])
+                    return 1
+                end if
+            elsif equal(area[aTYPE][1] ,"border") then 
+                MouseLeftDown = 0
+                if equal(area[aTYPE][2] ,"left") then
+                    dragwin_BeginResize(id,dragwin_LEFT,bounds[bMIN],bounds[bMAX])
+                    return 1
+                elsif equal(area[aTYPE][2] ,"right") then
+                    dragwin_BeginResize(id,dragwin_RIGHT,bounds[bMIN],bounds[bMAX])
+                    return 1
+                elsif equal(area[aTYPE][2] ,"top") then
+                    dragwin_BeginResize(id,dragwin_TOP,bounds[bMIN],bounds[bMAX])
+                    return 1
+                elsif equal(area[aTYPE][2] ,"bottom") then
+                    dragwin_BeginResize(id,dragwin_BOTTOM,bounds[bMIN],bounds[bMAX])
+                    return 1
+                end if
+            end if
+        --end if
+        
+        --If this has a type then return 1, this stops drag types from disableing other things on top of them
+        if length(area[aTYPE][1]) != 0 or length(area[aMENU][mLEFT]) then
+            return 1
+        end if
+    end if
+
+    return 0
+end function
+
+global procedure skinx_HandleMouse(integer id, atom event, atom x, atom y, atom shift)
+    atom win,class
+    sequence r,parentr
+    object area
+    atom pane,cur
+    sequence panes
+    object loc
+    sequence curhint
+    atom curcursor
+    atom RECT
+    win = sub_find(id,OpenWindows,oID)
+    if win = 0 then
+        return
+    end if
+    class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+
+    --Undo rollover changes that no longer aply
+    if event = LeftUp then
+        for i = 1 to length(OpenWindows[win][oCHANGEDRECTS][cDOWN]) do
+            r = OpenWindows[win][oCHANGEDRECTS][cDOWN][i]
+            RECT = allocate(16)
+            poke4(RECT,r)
+            if w32Func(xInvalidateRect,{getHandle(id),RECT,0}) then end if
+            free(RECT)
+            --bitBlt(id,                                    --dest
+            --       r[rLEFT],r[rTOP],                      --dest coords
+            --       OpenWindows[win][oBUFFER],             --source
+            --       r[rLEFT],r[rTOP],                      --source coords
+            --       r[rRIGHT]-r[rLEFT],r[rBOTTOM]-r[rTOP], --width,height
+            --       SRCCOPY)                               --raster operation
+        end for
+        OpenWindows[win][oCHANGEDRECTS][cDOWN] = {}
+        EraseFilledFocusRect()
+    elsif event = MouseMove then
+        for i = 1 to length(OpenWindows[win][oCHANGEDRECTS][cHOVER]) do
+            r = OpenWindows[win][oCHANGEDRECTS][cHOVER][i]
+            if not overlap({x,y},r) then
+                RECT = allocate(16)
+                poke4(RECT,r)
+                if w32Func(xInvalidateRect,{getHandle(id),RECT,0}) then end if
+                free(RECT)
+                --bitBlt(id,                                    --dest
+                --       r[rLEFT],r[rTOP],                      --dest coords
+                --       OpenWindows[win][oBUFFER],             --source
+                --       r[rLEFT],r[rTOP],                      --source coords
+                --       r[rRIGHT]-r[rLEFT],r[rBOTTOM]-r[rTOP], --width,height
+                --       SRCCOPY)                               --raster operation
+            end if
+        end for
+        OpenWindows[win][oCHANGEDRECTS][cHOVER] = {}        
+    end if
+
+    --handle mouse flags
+    if event = LeftDown then
+        releaseMouse()
+        captureMouse(id)
+        MouseLeftDown = 1
+        MouseLeftDownPos = {x,y}
+        MouseLeftDownAreas = {}
+    elsif event = LeftUp then
+        releaseMouse()
+        MouseLeftDown = 0
+    elsif event = RightDown then
+        releaseMouse()
+        captureMouse(id)
+        MouseRightDown = 1
+        MouseRightDownPos = {x,y}
+    elsif event = RightUp then
+        releaseMouse()
+        MouseRightDown = 0
+    end if
+
+    --check capture
+    if sequence(MouseCapture) then
+        loc = FindTransformedArea(OpenWindows[win][oAREA],MouseCapture)
+        if sequence(loc) then   
+            area = GetSubObject(OpenWindows[win][oAREA],loc)
+            area[aAREAS] = {}
+            if HandleMouseForArea(area,id,event,x,y,shift) then
+                return
+            else
+                MouseCapture = 0
+                releaseMouse()
+            end if
+        end if
+    end if
+
+    --Now see what the areas wanna do with this event
+    --setHint(id,"")
+    curhint = OpenWindows[win][oHINT]
+    OpenWindows[win][oHINT] = ""
+    curcursor = OpenWindows[win][oCURSOR]
+    if not HandleMouseForArea(OpenWindows[win][oAREA],id,event,x,y,shift) then
+        --it wasn't handled, if the mouse was captured then we need to uncapture it:
+        --handle draging (of panes)
+        for i = length(MouseLeftDownAreas) to 1 by -1 do
+            area = GetSubObject(OpenWindows[win][oAREA],FindTransformedArea(OpenWindows[win][oAREA],MouseLeftDownAreas[i]))
+            if sequence(area) then
+                if (event = MouseMove and MouseLeftDown) or event = LeftUp or event = LeftDown then
+                    --find the pane
+                    panes = GetPaneList(id)
+                    cur = area[aPARENT]
+                    pane = 0
+                    while 1 do
+                        if cur = 0 then
+                            exit
+                        end if
+                        pane = sub_find(cur,panes,pID)
+                        if pane != 0 then
+                            exit
+                        end if
+                        cur = Areas[cur][aPARENT]
+                    end while
+                    if pane != 0 and equal(area[aTYPE],{"pane","drag"}) then
+                        --parent should now be the location of the parent area
+
+                        --check if we've left the window
+                        parentr = GetSubObject(OpenWindows[win][oAREA],FindTransformedArea(OpenWindows[win][oAREA],panes[pane][pID]))
+                        parentr = parentr[aRECT]
+                        r = area[aRECT]
+                        if panes[pane][pDIRECTION] = pdUPDOWN then
+                            y -= (r[4]-r[2])/2
+                            r = {r[1],y,r[3],y+(r[4]-r[2])}
+                        elsif panes[pane][pDIRECTION] = pdLEFTRIGHT then
+                            x -= (r[3]-r[1])/2
+                            r = {x,r[2],x+(r[3]-r[1]),r[4]}
+                        end if
+                        
+                        if r[rLEFT] < parentr[rLEFT] then r = {parentr[rLEFT],r[2],parentr[rLEFT]+(r[3]-r[1]),r[4]} end if
+                        if r[rRIGHT] > parentr[rRIGHT] then r = {parentr[rRIGHT]-(r[3]-r[1]),r[2],parentr[rRIGHT],r[4]} end if
+                        if r[rTOP] < parentr[rTOP] then r = {r[1],parentr[rTOP],r[3],parentr[rTOP]+(r[4]-r[2])} end if
+                        if r[rBOTTOM] > parentr[rBOTTOM] then r = {r[1],parentr[rBOTTOM]-(r[4]-r[2]),r[3],parentr[rBOTTOM]} end if
+                        
+                        if event = MouseMove and MouseLeftDown then
+
+                            r = getClientPoint(id, r[rLEFT],r[rTOP]) & getClientPoint(id,r[rRIGHT],r[rBOTTOM])
+                            DrawFilledFocusRect(r[rLEFT],r[rTOP],r[rRIGHT],r[rBOTTOM])
+                            exit
+                        elsif event = LeftUp then
+                            EraseFilledFocusRect()
+                            if panes[pane][pDIRECTION] = pdUPDOWN then
+                                skinx_SetPanePosition(id,panes[pane][pID],-(r[2]-parentr[2]+(r[4]-r[2]))*(100/(parentr[2]-parentr[4])))
+                            elsif panes[pane][pDIRECTION] = pdLEFTRIGHT then
+                                skinx_SetPanePosition(id,panes[pane][pID],-(r[1]-parentr[1]+(r[3]-r[1]))*(100/(parentr[1]-parentr[3])))
+                            end if                                      
+                            exit
+                        end if
+                    end if
+                else
+                    exit
+                end if
+            end if
+        end for
+
+
+    end if
+   
+    
+    if win = sub_find(id,OpenWindows,oID) then --need to make sure the window still exists
+        if not equal(curhint,OpenWindows[win][oHINT]) then
+            if manageToolTip(0,0) then end if
+            if length(OpenWindows[win][oHINT]) > 0 then
+                setHint(id,ExpandTextVars(id,OpenWindows[win][oHINT]))
+                if manageToolTip(1,0) then end if
+            end if
+        end if
+        if not equal(curcursor,OpenWindows[win][oCURSOR]) then
+            setMousePointer(id,OpenWindows[win][oCURSOR])
+        end if
+        --
+    end if
+end procedure
+
+global procedure skinx_CaptureMouse(integer winid, sequence area)
+    releaseMouse()
+    captureMouse(winid)
+    MouseCapture = area
+end procedure
+
+global procedure skinx_ReleaseMouse()
+    MouseCapture = 0
+    releaseMouse()
+end procedure
+
+procedure RedrawAllAreasWithFocusImage(atom id,sequence area) --looooooong ugly name :)
+    --This procedure goes through all the areas in the window looking for ones which have a focus image
+    --these need to be redraw to reflect a change in focus
+    atom win
+    sequence images
+    win = sub_find(id,OpenWindows,oID)
+    
+    images = GetImagesFromArea(id,area)
+    
+    if images[iFOCUS] != 0 then
+        RefreshArea(id,area[aID])
+    else
+        for i = 1 to length(area[aAREAS]) do
+            RedrawAllAreasWithFocusImage(id,area[aAREAS][i])
+        end for
+    end if
+end procedure
+
+procedure WindowGotFocus(atom id)
+    atom win
+    win = sub_find(id,OpenWindows,oID)
+    if win = 0 then return end if
+    OpenWindows[win][oFOCUS] = 1
+    RedrawAllAreasWithFocusImage(id,OpenWindows[win][oAREA])
+end procedure
+
+procedure WindowLostFocus(atom id)
+    atom win
+    win = sub_find(id,OpenWindows,oID)
+    if win = 0 then return end if
+    if win != 0 then
+        OpenWindows[win][oFOCUS] = 0
+        RedrawAllAreasWithFocusImage(id,OpenWindows[win][oAREA])
+    end if
+end procedure
+
+global procedure skinx_WindowOpened(atom id)
+    sequence size
+    atom win,class,loc
+    win = sub_find(id,OpenWindows,oID)
+    if win = 0 then return end if
+    class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+    
+    WindowGotFocus(id)
+    size = getCtlSize(id)
+    WindowResized(id,SIZE_RESTORED,size[1],size[2])
+end procedure
+
+function LOWORD(atom v)
+    return and_bits(v,#FFFF)
+end function
+
+function HIWORD(atom v)
+    return and_bits(floor(v/#10000),#FFFF)
+end function
+
+global constant SM_CXSCREEN = 0,
+                SM_CYSCREEN = 1,
+                SM_XVIRTUALSCREEN = 76,
+                SM_YVIRTUALSCREEN = 77,
+                SM_CXVIRTUALSCREEN = 78,
+                SM_CYVIRTUALSCREEN = 79
+
+function GetVirtualScreenRect()
+    if getSystemMetrics(SM_CXVIRTUALSCREEN) = 0 then
+        -- Windows 95 compatibility
+        return {0,0,getSystemMetrics(SM_CXSCREEN),getSystemMetrics(SM_CYSCREEN)}
+    else
+        return {getSystemMetrics(SM_XVIRTUALSCREEN) ,getSystemMetrics(SM_YVIRTUALSCREEN),
+                getSystemMetrics(SM_CXVIRTUALSCREEN)+getSystemMetrics(SM_XVIRTUALSCREEN),getSystemMetrics(SM_CYVIRTUALSCREEN)+getSystemMetrics(SM_YVIRTUALSCREEN)}
+    end if
+end function
+
+global procedure skinx_HandleEvent(atom id, atom event, atom wParam, atom lParam) 
+    atom win,class,loc,mem,showCmd 
+    sequence rect,scrnrect
+    
+    if event = WM_ACTIVATE then
+        if LOWORD(wParam) = WA_INACTIVE then
+            WindowLostFocus(id)
+        else
+            WindowGotFocus(id)
+        end if
+    elsif event = WM_SIZE or event = WM_MOVE then 
+        if not isMinimized(id) then
+            rect = getRect(id)
+            scrnrect = GetVirtualScreenRect()
+            if rect[3] >= scrnrect[1] and rect[4] >= scrnrect[2] and rect[1] <= scrnrect[3] and rect[2] <= scrnrect[4] then
+                win = sub_find(id,OpenWindows,oID)
+                if win = 0 then return end if
+                class = sub_find(OpenWindows[win][oCLASS],wClasses,wNAME)
+
+                --Update window rects
+                loc = sub_find(wClasses[class][wNAME],SavedPositions,sNAME)
+                if loc = 0 then
+                    --If this window is not yet listed in WindowRects then add an entry for it
+                    SavedPositions = append(SavedPositions,BLANK_SAVED_POSITION)
+                    loc = length(SavedPositions)
+                end if
+                SavedPositions[loc][sNAME] = wClasses[class][wNAME]
+                SavedPositions[loc][sPOS]  = getRect(id)
+                
+                SavePositions()
+            end if
+
+            if event = WM_SIZE then
+                WindowResized(id,wParam,LOWORD(lParam),HIWORD(lParam))
+            end if
+        end if
+    end if
+end procedure
+
+--DEFAULT EVENT HANDLERS
+--Maybe convert these all to use the onEvent handlerer, would be neeter
+
+procedure ONPaint(integer x1, integer y1, integer x2, integer y2)
+    skinx_Repaint(getSelf(),x1,y1,x2,y2)
+end procedure
+
+procedure ONClose()
+--  skinx_RemoveWindow(getSelf())
+end procedure
+
+procedure ONMouse(atom event, atom x, atom y, atom shift)
+    skinx_HandleMouse(getSelf(),event,x,y,shift)
+end procedure
+
+procedure ONOpen()
+    skinx_WindowOpened(getSelf())
+end procedure
+
+procedure ONEvent(atom event, atom wParam, atom lParam) 
+    skinx_HandleEvent(getSelf(),event,wParam,lParam)
+end procedure
+
+------------------------
+--Skin loading----------
+------------------------
+
+--Used for image attributes in both ProccessState and ProccessArea
+function GetImages(atom Node)
+    sequence Atts
+    atom transparent
+    sequence images
+    
+    images = BLANK_IMAGES
+    
+    Atts = xmltree_GetAttributes(Node)
+    transparent = 0
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_QNAME],"transparent") then
+            transparent = equal(lower(Atts[i][EEBAX_ATTS_VALUE]),"true")
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"image") then
+            images[iNORMAL] = LoadImage(Atts[i][EEBAX_ATTS_VALUE])
+            if images[iNORMAL] = 0 then
+                return 0
+            end if
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"hoverimage") then
+            images[iHOVER] = LoadImage(Atts[i][EEBAX_ATTS_VALUE])
+            if images[iHOVER] = 0 then
+                return 0
+            end if
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"downimage") then
+            images[iDOWN] = LoadImage(Atts[i][EEBAX_ATTS_VALUE])
+            if images[iDOWN] = 0 then
+                return 0
+            end if
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"focusimage") then
+            images[iFOCUS] = LoadImage(Atts[i][EEBAX_ATTS_VALUE])
+            if images[iFOCUS] = 0 then
+                return 0
+            end if
+        end if
+    end for
+    
+    if images[iNORMAL] != 0 then
+        Images[images[iNORMAL]][iTRANS] = transparent or Images[images[iNORMAL]][iTRANS]
+    end if
+    if images[iHOVER] != 0 then
+        Images[images[iHOVER]][iTRANS] = transparent or Images[images[iHOVER]][iTRANS]
+    end if
+    if images[iDOWN] != 0 then
+        Images[images[iDOWN]][iTRANS] = transparent or Images[images[iDOWN]][iTRANS]
+    end if
+    if images[iFOCUS] != 0 then
+        Images[images[iFOCUS]][iTRANS] = transparent or Images[images[iFOCUS]][iTRANS]
+    end if
+    
+    return images
+end function
+
+function ProccessState(atom Node)
+    sequence Atts
+    object images,name
+    
+    Atts = xmltree_GetAttributes(Node)
+    name = 0
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_QNAME],"name") then
+            name = Atts[i][EEBAX_ATTS_VALUE]
+            exit
+        end if
+    end for
+    
+    images = GetImages(Node)
+    
+    if atom(images) or atom(name) then
+        return 0
+    else
+        return {name,images}
+    end if
+end function
+
+function ProccessCutout(atom Node)
+    sequence Atts,Children
+    sequence Cutout,points,point,buffer
+    atom i
+    Cutout = BLANK_CUTOUT
+    --get the type
+    Atts = xmltree_GetAttributes(Node)
+    Cutout[cTYPE] = 0
+    for n = 1 to length(Atts) do
+        if equal(Atts[n][EEBAX_ATTS_QNAME],"type") then
+            Cutout[cTYPE] = lower(Atts[n][EEBAX_ATTS_VALUE])
+            exit
+        end if
+    end for
+    if atom(Cutout[cTYPE]) then
+        return 0
+    end if
+    
+    --now get the points
+    Children = xmltree_GetChildren(Node)
+    if length(Children) > 0 and sequence(Children[1]) then
+        points = Children[1]
+    else
+        points = ""
+    end if
+    
+    point = {0,0}
+    i = 1
+    buffer = ""
+    while i <= length(points) do
+        if points[i] = ',' then
+            point[1] = buffer
+            buffer = ""
+        elsif points[i] = ' ' then
+            point[2] = buffer
+            buffer = ""
+            Cutout[cPOINTS] = append(Cutout[cPOINTS],point)
+            point = {0,0}
+        else
+            buffer &= points[i]
+        end if
+        i = i + 1
+    end while
+    if not atom(point[1]) then
+        point[2] = buffer
+        Cutout[cPOINTS] = append(Cutout[cPOINTS],point)
+    end if
+    return Cutout
+end function
+
+function GetWebColor(sequence webcolor)
+    object red,green,blue
+    if length(webcolor) != 7 then
+        return -1
+    end if
+    red = value("#"&webcolor[2..3])
+    red = red[2]
+    green = value("#"&webcolor[4..5])
+    green = green[2]
+    blue = value("#"&webcolor[6..7])
+    blue = blue[2]
+    return rgb(red,green,blue)
+end function
+
+function ProccessArea(atom Node)
+    sequence Atts,Children
+    object Error
+    sequence area
+    area = BLANK_AREA
+    
+    Atts = xmltree_GetAttributes(Node)
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_QNAME],"name") then
+            area[aNAME] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"top") then
+            area[aRECT][rTOP] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"left") then
+            area[aRECT][rLEFT] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"bottom") then
+            if length(area[aRECT][rBOTTOM]) != 0 then
+                return "Both bottom and height attributes specified for same area (" & area[aNAME] & ")"
+            end if
+            area[aRECT][rBOTTOM] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"height") then
+            if length(area[aRECT][rBOTTOM]) != 0 then
+                return "Both bottom and height attributes specified for same area (" & area[aNAME] & ")"
+            end if
+            area[aRECT][rBOTTOM] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"right") then
+            if length(area[aRECT][rRIGHT]) != 0 then
+                return "Both right and width attributes specified for same area (" & area[aNAME] & ")"
+            end if
+            area[aRECT][rRIGHT] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"width") then
+            if length(area[aRECT][rRIGHT]) != 0 then
+                return "Both right and width attributes specified for same area (" & area[aNAME] & ")"
+            end if
+            area[aRECT][rRIGHT] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"color") then
+            area[aCOLOR] = GetWebColor(Atts[i][EEBAX_ATTS_VALUE])
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"type") then
+            area[aTYPE][1] = lower(Atts[i][EEBAX_ATTS_VALUE])
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"subtype") then
+            area[aTYPE][2] = lower(Atts[i][EEBAX_ATTS_VALUE])
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"onleftclick") then
+            area[aEVENTS][eONLEFTCLICK] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"onrightclick") then
+            area[aEVENTS][eONRIGHTCLICK] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"leftmenu") then
+            area[aMENU][mLEFT] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"rightmenu") then
+            area[aMENU][mRIGHT] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"hint") then
+            area[aHINT] = Atts[i][EEBAX_ATTS_VALUE]
+        -- Text attributes
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"text") then
+            area[aTEXT][tTEXT] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"texthalign") then
+            area[aTEXT][tHALIGN] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"textvalign") then
+            area[aTEXT][tVALIGN] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"textfont") then
+            area[aTEXT][tFONT] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"textsize") then
+            area[aTEXT][tSIZE] = val(Atts[i][EEBAX_ATTS_VALUE])
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"textcolor") then
+            area[aTEXT][tCOLOR] = GetWebColor(Atts[i][EEBAX_ATTS_VALUE])
+        -- end text attributes
+        end if
+    end for
+    
+    area[aIMAGES] = GetImages(Node)
+    if atom(area[aIMAGES]) then
+        return "Error getting images for area (" & area[aNAME] & ")"
+    end if
+    
+    if length(area[aTEXT][tHALIGN]) = 0 then
+        area[aTEXT][tHALIGN] = "center"
+    end if
+    if length(area[aTEXT][tVALIGN]) = 0 then
+        area[aTEXT][tVALIGN] = "middle"
+    end if
+    if length(area[aTEXT][tFONT]) = 0 then  
+        area[aTEXT][tFONT] = "default"
+    end if
+    
+    
+    -- Deal with sub elements (AREAs, CUTOUTs and STATEs)
+    Children = xmltree_GetChildren(Node)
+    
+    for i = 1 to length(Children) do
+        if atom(Children[i]) then
+            if equal(xmltree_GetQName(Children[i]),"area") then
+                Error = ProccessArea(Children[i])
+                if sequence(Error) then
+                    return Error
+                else
+                    area[aAREAS] &= Error
+                end if
+            elsif equal(xmltree_GetQName(Children[i]),"cutout") then
+                -- Cutout will return the cutout (a sequence) on success or 0 (an atom) on failure
+                Error = ProccessCutout(Children[i])
+                if atom(Error) then
+                    return "Error processing cutout in area (" & area[aNAME] & ")"
+                else
+                    area[aCUTOUTS] = append(area[aCUTOUTS],Error)
+                end if
+            elsif equal(xmltree_GetQName(Children[i]),"state") then
+                Error = ProccessState(Children[i])
+                if atom(Error) then
+                    return "Error processing state in area (" & area[aNAME] & ")"
+                else
+                    area[aSTATES] = append(area[aSTATES],Error)
+                end if
+            end if
+        end if
+    end for
+    
+    Areas = append(Areas,area)
+    
+    Areas[length(Areas)][aID] = length(Areas)
+    
+    -- Set the sub areas parent
+    for i = 1 to length(area[aAREAS]) do
+        Areas[area[aAREAS][i]][aPARENT] = length(Areas)
+    end for
+    
+    return length(Areas)
+end function
+
+function ProccessWinClass(atom Node)
+    sequence Atts,Children
+    sequence class
+    
+    class = BLANK_CLASS
+    
+    --Load the attributes of the <window> element
+    Atts = xmltree_GetAttributes(Node)
+    class[wNAME] = 0
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_QNAME],"name") then
+            class[wNAME] = Atts[i][EEBAX_ATTS_VALUE]
+        end if
+    end for
+    if atom(class[wNAME]) then
+        return "Window without name attribute encountered"
+    end if
+    
+    Children = xmltree_GetChildren(Node)
+    for i = 1 to length(Children) do
+        if atom(Children[i]) then
+            if equal(xmltree_GetQName(Children[i]),"bounds") then
+                Atts = xmltree_GetAttributes(Children[i])
+                for n = 1 to length(Atts) do
+                    if equal(Atts[n][EEBAX_ATTS_QNAME],"minwidth") then
+                        class[wBOUNDS][bMIN][1] = val(Atts[n][EEBAX_ATTS_VALUE])
+                    elsif equal(Atts[n][EEBAX_ATTS_QNAME],"minheight") then
+                        class[wBOUNDS][bMIN][2] = val(Atts[n][EEBAX_ATTS_VALUE])
+                    elsif equal(Atts[n][EEBAX_ATTS_QNAME],"maxwidth") then
+                        class[wBOUNDS][bMAX][1] = val(Atts[n][EEBAX_ATTS_VALUE])
+                    elsif equal(Atts[n][EEBAX_ATTS_QNAME],"maxheight") then
+                        class[wBOUNDS][bMAX][2] = val(Atts[n][EEBAX_ATTS_VALUE])
+                    end if
+                end for
+            elsif equal(xmltree_GetQName(Children[i]),"area") then
+                class[wAREA] = ProccessArea(Children[i])
+            end if
+        end if
+    end for
+    
+    if sequence(class[wAREA]) then
+        return class[wAREA]
+    end if
+    
+    wClasses = append(wClasses,class)
+    return 1
+end function
+
+--Nested resources are represented by / so for for example a resources name Logo under a resource Branding would be called:
+--Branding/Logo
+function ProccessResource(atom Node,sequence Base)
+    sequence name,Atts,Children
+    sequence imagename
+    atom image
+    object Error
+    
+    name = Base
+    imagename = ""
+    
+    Atts = xmltree_GetAttributes(Node)
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_QNAME],"name") then
+            name &= Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_QNAME],"image") then
+            imagename = Atts[i][EEBAX_ATTS_VALUE]
+        end if
+    end for
+    
+    if length(imagename) != 0 then
+        image = LoadImage(imagename)
+        if image = 0 then
+            return "Unable to load image: " & imagename
+        end if
+        Resources = append(Resources,{name,image}) 
+    end if
+    
+    
+    Children = xmltree_GetChildren(Node)
+    for i = 1 to length(Children) do
+        if atom(Children[i]) and equal(xmltree_GetQName(Children[i]),"resource") then
+            Error = ProccessResource(Children[i],name&"/")
+            if sequence(Error) then
+                return Error
+            end if
+        end if
+    end for
+    return 1
+end function
+
+function ProccessMenuItems(atom Node)
+    sequence MenuItems,Children,Atts
+    MenuItems = {}
+    
+    Children = xmltree_GetChildren(Node)
+    for i = 1 to length(Children) do
+        if atom(Children[i]) and equal(xmltree_GetQName(Children[i]),"menuitem") then
+            MenuItems = append(MenuItems,BLANK_MENUITEM)
+            Atts = xmltree_GetAttributes(Children[i])
+            for n = 1 to length(Atts) do
+                if equal(Atts[n][EEBAX_ATTS_QNAME],"name") then
+                    MenuItems[length(MenuItems)][miNAME] = Atts[n][EEBAX_ATTS_VALUE]
+                elsif equal(Atts[n][EEBAX_ATTS_QNAME],"caption") then
+                    MenuItems[length(MenuItems)][miCAPTION] = Atts[n][EEBAX_ATTS_VALUE]
+                elsif equal(Atts[n][EEBAX_ATTS_QNAME],"onselect") then
+                    MenuItems[length(MenuItems)][miEVENT] = Atts[n][EEBAX_ATTS_VALUE]
+                end if
+            end for
+            MenuItems[length(MenuItems)][miSUBITEMS] = ProccessMenuItems(Children[i])
+        end if
+    end for
+    
+    return MenuItems
+end function
+
+function ProccessMenu(atom Node)
+    sequence Atts
+    Menus = append(Menus,BLANK_MENU)
+    Atts = xmltree_GetAttributes(Node)
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_QNAME],"name") then
+            Menus[length(Menus)][mNAME] = Atts[i][EEBAX_ATTS_VALUE]
+        end if
+    end for
+    
+    Menus[length(Menus)][mITEMS] = ProccessMenuItems(Node)
+    return 1
+end function
+
+function ReadFile( sequence fName )
+    integer handle
+    sequence out
+    object data
+    handle = open( fName, "r" )
+    if handle = -1 then return {} end if
+    out = {} data = {}
+    while sequence(data) do
+        out &= data
+        data = gets( handle )
+    end while
+    close( handle )
+    return out
+end function
+
+--Load the named skin, if it fails then return 0 else return a non-zero value
+global function skinx_LoadSkin(sequence name)
+    object Node,Error
+    sequence Children
+    object File
+    sequence path
+
+    File = skinxfile_Read(SKIN_DIR,name,"skin.xml")
+    if atom(File) then
+        return "Unable to read skin.xml"
+    end if
+    Node = xmltree_Parse(File)
+    if sequence(Node) then
+        -- xmltree_Parse returned an error
+        return "XML parseing error: EEBAX returned error number " & sprint(Node[1]) & " (" & Node[2] & ") in line " & sprint(Node[3]) & " of skin.xml"
+    end if
+    
+    if not equal(xmltree_GetQName(Node),"skin") then
+        return "Route element of skin.xml must be <skin>"
+    end if
+    
+    CurrentSkin = name
+    skinx_UnloadSkin()
+        
+    --Now cycle through the second level elements
+    Children = xmltree_GetChildren(Node)
+    for i = 1 to length(Children) do
+        if atom(Children[i]) then
+            if    equal(xmltree_GetQName(Children[i]),"about") then
+                --extract the about info from this element
+            elsif equal(xmltree_GetQName(Children[i]),"window") then
+                Error = ProccessWinClass(Children[i])
+                if sequence(Error) then
+                    return Error
+                end if
+            elsif equal(xmltree_GetQName(Children[i]),"resource") then
+                Error = ProccessResource(Children[i],"")
+                if sequence(Error) then
+                    return Error
+                end if
+            elsif equal(xmltree_GetQName(Children[i]),"menu") then
+                Error = ProccessMenu(Children[i])
+                if sequence(Error) then
+                    return Error
+                end if
+            end if
+        end if
+    end for
+    
+    xmltree_DeleteNode(Node)
+    
+    for i = 1 to length(OpenWindows) do
+        skinx_RefreshWindow(OpenWindows[i][oID])
+    end for
+    
+    --cause skinchange event
+    return 1
+end function
+------------------------
+
+global function skinx_GetAreaRect(integer winid,sequence areaname)
+    sequence fareas
+    atom win,loc
+    win = sub_find(winid,OpenWindows,oID)
+    fareas = FlattenArea(OpenWindows[win][oAREA])
+    if length(fareas) = 0 then return 0 end if
+    loc = sub_find(areaname,fareas,aNAME)
+    if loc = 0 then
+        return 0
+    else
+        return fareas[loc][aRECT]
+    end if
+end function
+
+--for images this returns a dib, for icons it returns a filename
+--if a sequence of names is passed the first existing one is returned
+global function skinx_GetResource(sequence name)
+    atom loc
+    if atom(name[1]) then name = {name} end if
+    for i = 1 to length(name) do
+        loc = sub_find(lower(name[i]),lower(Resources),rNAME)
+        if loc != 0 then
+            return Images[Resources[loc][rIMAGE]][iIMAGE]   
+        end if
+    end for
+    return 0
+end function
+
+global function skinx_CreateWindow(sequence class, sequence caption,atom x, atom y, integer width, integer height)
+    atom id,pixmap,classloc
+    atom spwinloc, sppaneloc --savedpositionwindowlocation and savedpositionpanelocation
+    sequence bordersize,screenrect,primscreenrect
+    
+    sequence panes
+    
+    classloc = sub_find(class,wClasses,wNAME)
+    
+    --Create the window or resue an old one
+    if length(ClosedWindows) = 0 then
+        if atom(classDefaults(Window,{{CCwinstyle, {CS_HREDRAW, CS_VREDRAW, CS_DBLCLKS }}})) then end if
+        id = createEx(Window,"",0,x,y,width,height,{WS_DLGFRAME,WS_SYSMENU},{})
+    else
+        id = ClosedWindows[length(ClosedWindows)]
+        ClosedWindows = ClosedWindows[1..length(ClosedWindows)-1]
+        onOpen  [id] = -1
+        onEvent [id] = -1
+        RemoveWindowRgn(id)
+    end if
+    
+    setText(id,caption)
+    setIcon(id,DEFAULT_ICON)
+    
+    pixmap = create(Pixmap,"",0,0,0,1,1,0)
+
+    --Place a reference to this window in OpenWindows
+    OpenWindows = append(OpenWindows,BLANK_OPENWINDOW)
+    
+    OpenWindows[length(OpenWindows)][oID]           = id
+    OpenWindows[length(OpenWindows)][oCLASS]        = class
+    OpenWindows[length(OpenWindows)][oBUFFER]       = pixmap
+    OpenWindows[length(OpenWindows)][oEVENTHANDLER] = -1
+    
+    --NOTE: panes are recalulated each time they are needed, this allows chaning of skins to not mess everything up :)
+    screenrect = GetVirtualScreenRect()
+    
+    if width < wClasses[classloc][wBOUNDS][bMIN][1] then
+        width = wClasses[classloc][wBOUNDS][bMIN][1]
+    elsif width > wClasses[classloc][wBOUNDS][bMAX][1] and wClasses[classloc][wBOUNDS][bMAX][1]  != 0 then
+        width = wClasses[classloc][wBOUNDS][bMAX][1]
+    end if
+
+    if height < wClasses[classloc][wBOUNDS][bMIN][2] then
+        height = wClasses[classloc][wBOUNDS][bMIN][2]
+    elsif height > wClasses[classloc][wBOUNDS][bMAX][2] and wClasses[classloc][wBOUNDS][bMAX][2] != 0 then
+        height = wClasses[classloc][wBOUNDS][bMAX][2]
+    end if
+    
+    if width > screenrect[3]-screenrect[1] then
+        width = screenrect[3]-screenrect[1]
+    end if
+    if height > screenrect[4]-screenrect[2] then
+        height = screenrect[4]-screenrect[2]
+    end if
+    
+    primscreenrect = getRect(Screen)
+    if x = Default then
+        x = floor(((primscreenrect[3]-primscreenrect[1])/2)-(width/2))
+    end if
+    if y = Default then
+        y = floor(((primscreenrect[4]-primscreenrect[2])/2)-(height/2))
+    end if   
+    
+    -- Load saved window positions
+    spwinloc = sub_find(wClasses[classloc][wNAME],SavedPositions,sNAME)
+    if spwinloc != 0 then
+        x = SavedPositions[spwinloc][sPOS][1]
+        y = SavedPositions[spwinloc][sPOS][2]
+        width = SavedPositions[spwinloc][sPOS][3]-SavedPositions[spwinloc][sPOS][1]
+        height = SavedPositions[spwinloc][sPOS][4]-SavedPositions[spwinloc][sPOS][2]
+        --Set any splitters to they're last saved postion
+        panes = GetPaneList(id)
+        for i = 1 to length(panes) do   
+            sppaneloc = sub_find(Areas[panes[i][pID]][aNAME],SavedPositions[spwinloc][sPANES],sNAME)
+            if sppaneloc != 0 then
+                skinx_SetPanePosition(id,panes[i][pID],SavedPositions[spwinloc][sPANES][sppaneloc][sPOS])
+            end if
+        end for
+    end if   
+    
+    -- Make sure the window is not offscreen
+    
+    if x < screenrect[1] then
+        x = screenrect[1]
+    end if
+    if y < screenrect[2] then
+        y = screenrect[2]
+    end if
+    
+    if x+width > screenrect[3]-screenrect[1] then
+        x = (screenrect[3]-screenrect[1])-width
+    end if
+    if y+height > screenrect[4]-screenrect[2] then
+        y = (screenrect[4]-screenrect[2])-height
+    end if
+    
+    setRect(id,x,y,width,height,False)
+    
+    --Set up events
+    onOpen  [id]    = routine_id("ONOpen")
+    onPaint [id]    = routine_id("ONPaint")
+    onClose [id]    = routine_id("ONClose")
+    onMouse [id]    = routine_id("ONMouse")
+    onEvent [id]    = routine_id("ONEvent")
+    --Paint the window to it's buffer
+    WindowResized(id,SIZE_RESTORED,width,height)
+    return id
+end function
+
+global function skinx_CreateControl(atom winid, sequence area, atom ctlclass, sequence title, object flags, object exflags)
+    atom win,ctlid
+    win = sub_find(winid,OpenWindows,oID)
+    ctlid = createEx(ctlclass,title,winid,0,0,10,10,flags,exflags) --the control will be resized properly on the resize event
+    OpenWindows[win][oCONTROLS] = append(OpenWindows[win][oCONTROLS],{ctlid,area})
+    ResizeControls(winid)
+    return ctlid
+end function
+
+global procedure skinx_ChangeEventHandler(atom id,atom eventhandler)
+    OpenWindows[sub_find(id,OpenWindows,oID)][oEVENTHANDLER] = eventhandler
+end procedure
+
+--Must use reverse find, sometimes buffer id's are reused when the old ones are deleted
+global function RevFind(object fnd, sequence in)
+    return (length(in)-find(fnd,reverse(in)))+1
+end function
+
+--when an area is taken over all events are sent to the suplied handler and repainting is handled by the calling piece of code
+global function skinx_TakeoverArea(atom winid, sequence areaname, atom mousevent, atom resizeevent, atom transparent)
+    atom win
+    object loc
+    sequence CustomArea,area
+    win = sub_find(winid,OpenWindows,oID)
+    CustomArea = BLANK_CUSTOMAREA
+    CustomArea[caAREA]   = areaname
+    CustomArea[caEVENTS][eONMOUSE]  = mousevent
+    CustomArea[caEVENTS][eONRESIZE] = resizeevent
+    CustomArea[caTRANSPARENT] = transparent
+    
+    loc = FindTransformedArea(OpenWindows[win][oAREA],areaname)
+    if sequence(loc) then
+        area = GetSubObject(OpenWindows[win][oAREA],loc)
+    end if
+    --if sequence(loc) and area[aRECT][rRIGHT]-area[aRECT][rLEFT] > 0 and area[aRECT][rBOTTOM]-area[aRECT][rTOP] > 0 then
+    --    CustomArea[caBUFFER] = create(Pixmap,"",0,0,0,area[aRECT][rRIGHT]-area[aRECT][rLEFT],area[aRECT][rBOTTOM]-area[aRECT][rTOP],0)
+    --else
+        CustomArea[caBUFFER] = create(Pixmap,"",0,0,0,1,1,0)
+    --end if
+    
+    OpenWindows[win][oCUSTOMAREAS] = append(OpenWindows[win][oCUSTOMAREAS],CustomArea)
+    return CustomArea[caBUFFER]
+end function
+
+--SKIN INFO FUNCTIONS:
+--{displayname,description,author,email,web}
+--global function skinx_GetSkinInfo(sequence name)
+--    object ParsedXML
+--    sequence ret
+--
+--    ParsedXML = LoadSkinXML(SKIN_DIR & "\\" & name & "\\skin.xml")
+--    if atom(ParsedXML) then
+--        return 0
+--    end if
+--
+--    ret = SKINX_BLANK_INFO
+--    ret[SKINX_INFO_DISPLAYNAME] = name --default
+--    
+--    ParsedXML = xml_GetSubElement(ParsedXML,"about")
+--    if atom(ParsedXML) then
+--        return ret
+--    end if
+--    
+--    --Now cycle through the elements
+--    for i = 1 to length(ParsedXML[XML_pDATA][XML_dCONTENTS]) do
+--        if ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pTYPE] = XML_tELEMENT then    
+--            if equal(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dNAME],"displayname") then
+--                ret[SKINX_INFO_DISPLAYNAME] = xml_DeParse(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dCONTENTS])
+--            elsif equal(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dNAME],"descr") then
+--                ret[SKINX_INFO_DESCRIPTION] = xml_DeParse(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dCONTENTS])
+--            elsif equal(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dNAME],"author") then
+--                ret[SKINX_INFO_AUTHOR] = xml_DeParse(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dCONTENTS])
+--            elsif equal(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dNAME],"email") then
+--                ret[SKINX_INFO_EMAIL] = xml_DeParse(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dCONTENTS])
+--            elsif equal(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dNAME],"web") then
+--                ret[SKINX_INFO_WEB] = xml_DeParse(ParsedXML[XML_pDATA][XML_dCONTENTS][i][XML_pDATA][XML_dCONTENTS])
+--            end if
+--        end if
+--    end for
+--    return ret
+--end function
+
+--return a sequence skin names:
+global function skinx_EnumSkins()
+    return skinxfile_List(SKIN_DIR)
+end function
+
+--Load SavedPositions
+atom fn
+fn = open(SKIN_DIR&"\\positions.ini","r")
+if fn != -1 then
+    SavedPositions = get(fn)
+    if SavedPositions[1] = GET_SUCCESS  then
+        SavedPositions = SavedPositions[2]
+    else
+        SavedPositions = {}
+    end if
+    close(fn)
+else
+    SavedPositions = {}
+end if

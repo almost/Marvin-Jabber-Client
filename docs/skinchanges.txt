@@ -1,0 +1,61 @@
+The <title> tag is no longer used and will be ignored.
+The <icon> tag is no longer used and will be ignored.
+
+-------
+|0.0.6|
+-------
+
+The following changes have been made to Marvin's skin format since
+version 0.0.5, hopefully there will be no further non backwards
+compatible changes to the skin format:
+
+Added the <state> element
+-------------------------
+The state element allows you to define different images for an area
+which are selected by the program depending on certain things. For
+example in the case of check boxes you might have something like:
+
+<area name="savepassword" top="T146" left="L59" height="16" width="16"
+onleftclick="savepassword">
+   <state name="unchecked" image="round-normal.gif"/>
+   <state name="checked" image="round-down.gif"/>
+</area>
+
+It will show up as "round-normal.gif" when it's unchecked and
+"round-down.gif" when it has been checked. The name attribute tills Marvin
+that this area's state should be set according to the state of
+"savepassword". The onleftclick attribute tells marvin to toggle
+savepassword when the area is clicked.
+
+I think this is a lot neater than the solution I was using before
+involving resources (resources are still used, but just for stuff like the
+roster and the scrollbar).
+
+See sections 1.7 and 2.9 in skinxformat.html
+See also marvin_skindef.html for a complete list of states for each
+area.
+
+Added text variables
+--------------------
+Text variables allow an area's text to be changed by Marvin to
+incorporate values that the may be useful to present to the user. An
+example of this is in the connecting window, the text field must be
+updated to show which stage of the connection process Marvin is in.
+
+To include a text variable in an areas text use the variables name
+surrounded by two $ characters, in the following example from the
+message window the windows caption text equals "Message: " followed by
+the user whom the message is addressed to (I've simplified this area a
+little):
+
+<area text="Message: $recipientnick$" top="T0" left="L14" right="R14"
+height="25" texthalign="center" textvalign="middle" textfont="verdana"
+textsize="8" textcolor="#FFFFFF"/>
+
+The way I was doing this before was to have Marvin set the text
+attribute of areas with specified names. However, this way allows you
+to include multiple string variables and your own text freely mixed in
+the a single text attribute.
+
+See section 1.6 in skinxformat.html
+See also marvin_skindef.html for a complete list of text variables.

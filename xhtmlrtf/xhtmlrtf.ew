@@ -1,0 +1,739 @@
+--XHTML/RTF CONVERSIONS
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--Sorry, some of the code in this file is very bad, it needs re writing but it works for now.......
+include eebax.e
+include xmltree.e
+include misc.e
+
+constant DEFAULT_FONTS =  {"Times New Roman", --f0 --default
+                           "Courier New"     --f1
+                          }
+                          
+--color table starts at 1, 0 being "auto"
+constant DEFAULT_COLORS = {{  0,255,255}, --1  aqua
+                           {  0,  0,  0}, --2  black
+                           {  0,  0,255}, --3  blue
+                           {255,  0,255}, --4  fuchsia
+                           {128,128,128}, --5  gray
+                           {  0,128,  0}, --6  green
+                           {  0,255,  0}, --7  lime
+                           {128,  0,  0}, --8  maroon
+                           {128,128,  0}, --9  olive
+                           {128,  0,128}, --10 purple
+                           {255,  0,  0}, --11 red
+                           {192,192,192}, --12 silver
+                           {  0,128,128}, --13 teal
+                           {255,255,255}, --14 white
+                           {255,255,  0}  --15 yellow
+                          }
+
+--{html,rtf,paragraphbreak}
+constant HTMLTAGS = {{"body"        ,{"plain"},0 },
+                     {"b"           ,{"b"    },0 },
+                     {"i"           ,{"i"    },0 },
+                     {"u"           ,{"ul"   },0 },
+                     {"em"          ,{"i"    },0 },
+                     {"strong"      ,{"b"    },0 }, 
+                     {"code"        ,{"f1"   },0 }, --Courier New
+                     {"h1"          ,{"par","fs48","b"},1},
+                     {"h2"          ,{"par","fs28","b"},1}, --14   points
+                     {"h3"          ,{"par","fs27","b"},1}, --13.5 points
+                     {"h4"          ,{"par","fs24","b"},1}, --12   points
+                     {"h5"          ,{"par","fs20","b"},1}, --10   points
+                     {"h6"          ,{"par","fs15","b"},1}, --7.5  points
+                     {"q"           ,{"i"    },0},
+                     {"blockquote"  ,{"i"    },0},
+                     {"address"     ,{"i"    },0},
+                     {"samp"        ,{"r0"   },0},
+                     {"var"         ,{"b"    },0},
+                     {"br"          ,{"par"  },0 },
+                     {"p"           ,0,1},
+                     {"div"         ,0,1},
+                     {"center"      ,{"qc"},1},
+                     {"html"      ,{"pard"},0}
+                    }
+                
+                
+constant SIZE_NAMES =      {{"xx-small",7.5},
+                            {"x-small", 10},
+                            {"small",   12},
+                            {"medium",  13.5},
+                            {"large",   18},
+                            {"x-large", 24},
+                            {"xx-large",36}
+                            }
+constant COLOR_NAMES =     {{"aqua",   {  0,255,255}},
+                            {"black",  {  0,  0,  0}},
+                            {"blue",   {  0,  0,255}},
+                            {"fuchsia",{255,  0,255}},
+                            {"gray",   {128,128,128}},
+                            {"green",  {  0,128,  0}},
+                            {"lime",   {  0,255,  0}},
+                            {"maroon", {128,  0,  0}},
+                            {"olive",  {128,128,  0}},
+                            {"purple", {128,  0,128}},
+                            {"red",    {255,  0,  0}},
+                            {"silver", {192,192,192}},
+                            {"teal",   {  0,128,128}},
+                            {"white",  {255,255,255}},
+                            {"yellow", {255,255,  0}}
+                            }
+                            
+constant GENERIC_FONTS =   {{"serif","Times New Roman"},
+                            {"sans-serif","Arial"},
+                            {"cursive","Comic Sans MS"},
+                            {"fantasy","Algerian"},
+                            {"monospace","Courier New"}
+                            }
+                
+constant T_HTML = 1,
+         T_RTF  = 2,
+         T_PARA = 3
+         
+constant EEBAX = eebax_NewInstance()
+
+eebax_SetStartDocumentEvent(EEBAX,routine_id("xmltree_onStartDocument"))
+eebax_SetEndDocumentEvent(EEBAX,routine_id("xmltree_onEndDocument"))
+eebax_SetStartElementEvent(EEBAX,routine_id("xmltree_onStartElement"))
+eebax_SetEndElementEvent(EEBAX,routine_id("xmltree_onEndElement"))
+eebax_SetCharactersEvent(EEBAX,routine_id("xmltree_onCharacters"))
+eebax_SetIgnorableWhitespaceEvent(EEBAX,routine_id("xmltree_onIgnorableWhitespace"))
+
+--{fontname,fontname,fontname,...}
+sequence FontTable --global to all xhtml2rtf conversions
+FontTable = DEFAULT_FONTS
+
+sequence ColorTable
+ColorTable = DEFAULT_COLORS
+         
+--TODO: Must replace \'s with \\'s and stuff like that
+         
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function    
+
+constant WHITESPACE =  {9,10,13,32}
+
+function ltrim(sequence s)
+    -- discard leading whitespace of sequence s
+    for i = 1 to length(s) do
+        if not find(s[i], WHITESPACE) then  return s[i..length(s)] end if
+    end for
+    return {}
+end function
+
+function rtrim(sequence s)
+    -- discard trailing whitespace of sequence s
+    for i = length(s) to 1 by -1 do
+        if not find(s[i], WHITESPACE) then  return s[1..i] end if
+    end for
+    return {}
+end function
+
+function trim(sequence s)
+    -- discard leading and trailing whitespace of sequence s
+    return ltrim(rtrim(s))
+end function
+         
+function strip(sequence s,sequence c)
+    sequence ret
+    ret = ""
+    for i = 1 to length(s) do
+        if not find(s[i],c) then
+            ret = ret&s[i]
+        end if
+    end for
+    return ret
+end function
+
+function ParseStyle(sequence raw)
+    sequence pairs,pair
+    atom loc
+    pairs = {}
+    raw = rtrim(raw)
+    while 1 do
+        pair = {"",""}
+        raw = ltrim(raw)
+        loc = find(':',raw)
+        if loc = 0 or loc = length(raw) then
+            exit
+        end if
+        pair[1] = trim(raw[1..loc-1])
+        raw = raw[loc+1..length(raw)]
+        raw = ltrim(raw)
+        
+        loc = find(';',raw)
+        if loc = 0 or loc = length(raw) then
+            pair[2] = raw
+            raw = ""
+        else
+            pair[2] = trim(raw[1..loc-1])
+            raw = raw[loc+1..length(raw)]
+        end if
+        pairs = append(pairs,pair)
+    end while
+    return pairs
+end function
+
+function ParseXHTMLColor(sequence raw)
+    atom loc
+    object ret
+    if length(raw) = 0 then return {0,0,0} end if
+    loc = sub_find(lower(raw),COLOR_NAMES,1)
+    if loc != 0 then
+        return COLOR_NAMES[loc][2]
+    elsif raw[1] = '#' then
+        if length(raw) = 7 then
+            raw = upper(raw)
+            ret = {raw[2..3],raw[4..5],raw[6..7]}
+            for i = 1 to length(ret) do
+                ret[i] = value("#"&ret[i])
+                ret[i] = ret[i][2]
+            end for
+            return {ret[1],ret[2],ret[3]}
+        elsif length(raw) = 4 then
+            raw = upper(raw)
+            ret = {{raw[2]},{raw[3]},{raw[4]}}
+            for i = 1 to length(ret) do
+                ret[i] = value("#"&ret[i])
+                ret[i] = ret[i][2]
+            end for
+            return {ret[1],ret[2],ret[3]}
+        else
+            return {0,0,0}
+        end if
+    elsif length(raw) > 5 and equal(raw[1..4],"rgb(") then
+        raw = raw[5..length(raw)-1]
+        ret = {0,0,0}
+        for i = 1 to 3 do
+            if length(raw) = 0 then
+                return {0,0,0}
+            end if
+            loc = find(',',raw)
+            if loc = 0 then
+                loc = length(raw)
+            end if
+            ret[i] = raw[1..loc-1]
+            if length(raw) = 0 then
+                raw = ""
+            else
+                raw = raw[loc+1..length(raw)]
+            end if
+            if ret[i][length(ret[i])] = '%' then
+                ret[i] = value(ret[i])
+                ret[i] = (ret[i][2]/100)*255
+            else
+                ret[i] = value(ret[i])
+                ret[i] = ret[i][2]
+            end if
+        end for
+        return {ret[1],ret[2],ret[3]}
+    end if
+    return {0,0,0}
+end function
+
+
+function GetXHTMLColor(sequence raw)
+    object color
+    atom loc
+    color = ParseXHTMLColor(raw)
+    loc = find(color,ColorTable)
+    if loc != 0 then
+        return loc
+    else
+        ColorTable = append(ColorTable,color)
+        return length(ColorTable)
+    end if
+end function
+
+function GetFont(sequence name)
+    atom loc
+    loc = sub_find(lower(name),GENERIC_FONTS,1)
+    if loc != 0 then
+        name = GENERIC_FONTS[loc][2]
+    end if
+    
+    loc = find(lower(name),lower(FontTable))
+    if loc != 0 then
+        return loc-1
+    else
+        FontTable = append(FontTable,lower(name))
+        return length(FontTable)-1
+    end if
+end function
+
+function XHTML2RTF(atom Node)
+    sequence rtf
+    sequence Contents,Atts,style,href
+    sequence rtftags
+    object size
+    atom Para
+    atom loc
+    
+    rtf = ""
+    
+    -- Get the contents of this tag and convert it to RTF
+    Contents = xmltree_GetChildren(Node)
+    for i = 1 to length(Contents) do
+        if sequence(Contents[i]) then
+            --Escape special chars
+            for n = length(Contents[i]) to 1 by -1 do
+                if find(Contents[i][n],"\\{}") then
+                    Contents[i] = Contents[i][1..n-1]&"\\"&Contents[i][n..length(Contents[i])]
+                end if
+            end for
+            rtf &= Contents[i]
+        else
+            rtf &= XHTML2RTF(Contents[i])
+        end if
+    end for
+    
+    rtftags = {}
+    
+    loc = sub_find(xmltree_GetLocalName(Node),HTMLTAGS,T_HTML)
+    Para = 0
+    if loc != 0 then
+        if sequence(HTMLTAGS[loc][T_RTF]) then
+            rtftags &= HTMLTAGS[loc][T_RTF]
+            Para = HTMLTAGS[loc][T_PARA]
+        end if
+    end if
+   
+    Atts = xmltree_GetAttributes(Node)
+    style = {}
+    href = ""
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_LOCALNAME],"style") then
+            style = ParseStyle(Atts[i][EEBAX_ATTS_VALUE])
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"href") then
+            href = Atts[i][EEBAX_ATTS_VALUE]
+        end if
+    end for
+    for n = 1 to length(style) do
+        if equal(style[n][1],"font-size") then
+            --first intepret the size
+            size = style[n][2]
+            loc = sub_find(lower(size),SIZE_NAMES,1)
+            if loc != 0 then
+                size = SIZE_NAMES[loc][2]
+            elsif equal(size[length(size)-1..length(size)],"pt") then
+                size = value(size[1..length(size)-1])
+                size = size[2]
+            elsif size[length(size)] = '%' then
+                size = value(size[1..length(size)-1])
+                size = (size[2]/100)*12
+            else
+                size = 12
+            end if
+            size = floor(size*2)
+            rtftags = append(rtftags,sprintf("fs%d",{size}))
+        elsif equal(style[n][1],"color") then
+            rtftags = append(rtftags,sprintf("cf%d",{GetXHTMLColor(style[n][2])}))
+        elsif equal(style[n][1],"background-color") then
+            rtftags = append(rtftags,sprintf("cb%d",{GetXHTMLColor(style[n][2])}))
+        elsif equal(style[n][1],"text-decoration") then
+            if equal(style[n][2],"none") then
+                rtftags &= {"ulnone","strike0"}
+            elsif equal(style[n][2],"underline") then
+                rtftags &= {"ul"}
+            elsif equal(style[n][2],"overline") then
+            elsif equal(style[n][2],"line-through") then
+                rtftags &= {"strike"}                
+            elsif equal(style[n][2],"blink") then
+            end if
+        elsif equal(style[n][1],"font-family") then
+            rtftags &= {sprintf("f%d",{GetFont(style[n][2])})}
+        elsif equal(style[n][1],"text-align") then
+            if length(style[n][2]) != 0 then
+                rtftags &= {"q"&lower(style[n][2][1])}
+                Para = 1
+            end if
+        end if
+    end for
+
+    for i = 1 to length(rtftags) do
+        rtf = "\\" & rtftags[i] & " " & rtf
+    end for
+    
+    -- Links
+    -- The way I handle links is to enclose them in an html-like anchor tag, 
+    -- I make this tag hidden so it will only show up if the user copies the
+    -- text to somewhere which pastes plain text. This markup can be searched for
+    -- when the user clicks on text. I know it looks like a rather odd way of doing
+    -- things but the RichEdit control doesn't support links properly....
+    if equal(xmltree_GetLocalName(Node),"a") and length(href) > 0 then
+        rtf = "\\v1 <a href=\"" & href & "\">\\v0\\ul\\cf3 " & rtf & "\\v1 </a> \\v0"
+    end if
+    
+    if Para then
+        --rtf = "\\par " & rtf & "\\par "
+        rtf = rtf & "\\par "
+    end if
+    
+    rtf = "{"&rtf&"}"
+    
+    return rtf
+end function
+
+function BuildFontTable(sequence fonts)
+    sequence ret
+    ret = "{\\fonttbl"
+    for i = 1 to length(fonts) do
+        ret&= sprintf("{\\f%d\\fnil %s;}",{i-1,fonts[i]})
+    end for
+    ret &= "}"
+    return ret
+end function
+
+function BuildColorTable(sequence colors)
+    sequence ret
+    ret = "{\\colortbl;"
+    for i = 1 to length(colors) do
+        ret&= sprintf("\\red%d\\green%d\\blue%d;",colors[i])
+    end for
+    ret &= "}"
+    return ret
+end function
+
+global function xhtmlrtf_RTFHeaders(sequence rtf)
+    return "{\\rtf1 "&BuildFontTable(FontTable)&BuildColorTable(ColorTable)&"{{\\pard "&rtf&"}}}"
+end function
+
+global function xhtmlrtf_XHTML2RTF(object Node,atom Headers)
+    sequence RTF
+
+    if sequence(Node) then
+        eebax_ResetInstance(EEBAX)
+        eebax_StartDocument(EEBAX)
+        if eebax_Parse(EEBAX,Node) then end if
+        eebax_EndDocument(EEBAX)
+        Node = xmltree_GetRootFromhInst(EEBAX)
+    end if
+    
+    RTF = XHTML2RTF(Node)
+    -- Strip 1 char off end before concatinating
+    if Headers then
+        return xhtmlrtf_RTFHeaders(RTF)
+    else
+        return RTF
+    end if
+end function
+
+function ExtractFontTable(sequence rtf)
+    sequence fonts
+    integer loc
+    fonts = {}
+    loc = match("\\fonttbl",rtf)
+    if not loc then
+        return fonts
+    end if
+    rtf = rtf[loc+length("\\fonttbl")..length(rtf)]
+    for i = 0 to 1000 do --to large number
+        loc = match(sprintf("\\f%d",{i}),rtf)
+        if not loc then
+            exit
+        end if
+        rtf = rtf[loc..length(rtf)]
+        loc = find(' ',rtf)
+        fonts = append(fonts,"")
+        if loc then
+            rtf = rtf[loc+1..length(rtf)]
+            loc = find(';',rtf)
+            if loc then
+                fonts[i+1] = trim(rtf[1..loc-1])
+            end if
+        end if
+    end for
+    return fonts
+end function
+
+function ExtractColorTable(sequence rtf)
+    sequence colors
+    sequence tag
+    object param
+    integer loc
+    colors = {{0,0,0}}
+    loc = match("\\colortbl",rtf)
+    if not loc then
+        return colors
+    end if
+    rtf = rtf[loc+length("\\colortbl")..length(rtf)]
+
+    for i = 1 to length(rtf) do
+        if rtf[i] = '}' then
+            exit
+        elsif rtf[i] = ';' then
+            colors = append(colors,{0,0,0})
+        elsif rtf[i] = '\\' then
+            tag = ""
+            param = ""
+            for n = i+1 to length(rtf) do
+                if rtf[n] >= 'a' and rtf[n] <= 'z' then
+                    tag &= rtf[n]
+                elsif rtf[n] >= '0' and rtf[n] <= '9' then
+                    param &= rtf[n]
+                else
+                    exit
+                end if
+            end for
+            param = value(param)
+            param = param[2]
+            if equal(tag,"red") then
+                colors[length(colors)][1]  = param
+            elsif  equal(tag,"green") then
+                colors[length(colors)][2]  = param
+            elsif  equal(tag,"blue") then
+                colors[length(colors)][3]  = param
+            end if
+        end if
+    end for
+    return colors
+end function
+
+constant sBOLD     = 1,
+         sITALIC   = 2,
+         sUNDERLINE= 3,
+         sFONT     = 4, --ref to font table
+         sFONTSIZE = 5, --half points
+         sCOLOR    = 6,  --ref to color table
+         sHIDDEN   = 7
+constant defSTATE = {0,0,0,0,20,0,0}
+
+--procedure DebugONXML(integer hInst,sequence xml)
+--    puts(1,xml)
+--end procedure
+--eebax_SetXMLEvent(EEBAX,routine_id("DebugONXML"))
+
+procedure onParseError_EEBAX(integer hInst, integer ErrorNumber, sequence Description, integer LineNumber)
+    puts(1,"EEBAX error is xhtmlrtf.ew: " & sprint(ErrorNumber) & " (" & Description & ")\n")
+end procedure
+eebax_SetParseErrorEvent(EEBAX,routine_id("onParseError_EEBAX"))
+
+global function xhtmlrtf_RTF2XHTML(sequence rtf)
+    sequence blocks,htmlstack
+    integer i,empty
+    sequence colors,fonts
+    sequence stack
+    sequence text,state,newstate
+    sequence tag
+    object param
+    fonts = ExtractFontTable(rtf)
+    colors = ExtractColorTable(rtf)
+    
+    --first make a sequence of blocks, all text in a block has the same style
+    blocks = {}
+    stack = {}
+    text = ""
+    state = defSTATE
+    i = 1
+    newstate = state
+
+    while i <= length(rtf) and rtf[i] != 0 do       
+        if rtf[i] = '{' then
+            --push onto stack
+            stack = append(stack,newstate)
+        elsif rtf[i] = '}' then
+            --pop stack
+            newstate = stack[length(stack)]
+            stack = stack[1..length(stack)-1]
+        elsif rtf[i] = '\\' then --and rtf[i-1] != '\\' and rtf[i+1] != '\\' then
+            if rtf[i+1] = '\'' then
+                param = value("#"&upper(rtf[i+2..i+3]))
+                text &= param[2]
+                i += 3
+            elsif find(rtf[i+1],"{}\\") then
+                text &= rtf[i+1]
+                i += 1
+            else
+                tag = ""
+                param = ""
+                for n = i+1 to length(rtf) do
+                    if rtf[n] >= 'a' and rtf[n] <= 'z' then
+                        tag &= rtf[n]
+                    elsif rtf[n] = '-' or (rtf[n] >= '0' and rtf[n] <= '9') then
+                        param &= rtf[n]
+                    else
+                        if rtf[n] = ' ' or rtf[n] = ';' then
+                            i = n
+                        else
+                            i = n-1
+                        end if
+                        exit
+                    end if
+                end for
+
+                --find out if this code affacts the state
+
+                if equal(tag,"b") then          --bold
+                    newstate[sBOLD] = not equal(param,"0")
+                elsif equal(tag,"i") then       --italic
+                    newstate[sITALIC] = not equal(param,"0")
+                elsif equal(tag,"ul") then      --underline
+                    newstate[sUNDERLINE] = not equal(param,"0")
+                elsif equal(tag,"ulnone") then  --underline off
+                    newstate[sUNDERLINE] = 0 
+                elsif equal(tag,"*") or
+                      equal(tag,"fonttbl") or
+                      equal(tag,"colortbl") or
+                      equal(tag,"stylesheet") or
+                      equal(tag,"info") then    --hide
+                    newstate[sHIDDEN] = 1
+                elsif equal(tag,"fs") then      --fontsize
+                    param = value(param)
+                    param = param[2]
+                    newstate[sFONTSIZE] = param
+                elsif equal(tag,"f") then       --font
+                    param = value(param)
+                    param = param[2]
+                    newstate[sFONT] = param
+                elsif equal(tag,"cf") then      --font color
+                    param = value(param)
+                    param = param[2]
+                    newstate[sCOLOR] = param
+                end if
+            end if
+        else
+            text &= rtf[i]
+        end if
+        
+        for k = length(text)-1 to 1 by -1  do
+            if equal(text[k..k+1],{13,10}) then
+                text = text[1..k-1]&text[k+1..length(text)]
+            end if
+        end for
+        
+        if not equal(newstate,state) and length(trim(text)) > 0 then
+            blocks = append(blocks,{state,text})
+            text = ""
+        end if
+        state = newstate
+        i = i + 1
+    end while
+    if length(text) != 0 then
+        blocks = append(blocks,{state,text})
+    end if
+    --remove hidden blocks
+    for k = length(blocks) to 1 by -1 do
+        if blocks[k][1][sHIDDEN] then
+            blocks = blocks[1..k-1]&blocks[k+1..length(blocks)]
+        end if
+    end for
+    --remove empty blocks at front
+    for k = 1 to length(blocks) do
+        if length(blocks) > 0 and length(trim(blocks[1][2])) = 0 then
+            blocks = blocks[2..length(blocks)]
+        else
+            exit
+        end if
+    end for
+    --remove empty blocks at end
+    for k = 1 to length(blocks) do
+        if length(blocks) > 0 and length(trim(blocks[length(blocks)][2])) = 0 then
+            blocks = blocks[1..length(blocks)-1]
+        else
+            exit
+        end if
+    end for
+    if length(blocks) then
+        blocks[1][2] = ltrim(blocks[1][2])
+        blocks[length(blocks)][2] = rtrim(blocks[length(blocks)][2])    
+    end if
+    
+    --should now have all the text in block format
+    eebax_ResetInstance(EEBAX)
+    eebax_StartDocument(EEBAX)
+    eebax_StartElement(EEBAX,"html",{{"xmlns","http://www.w3.org/1999/xhtml"}},0)
+    eebax_StartElement(EEBAX,"body",{},0)
+    for k = 1 to length(blocks) do
+        htmlstack = {}
+        text = blocks[k][2]
+        state = blocks[k][1]
+        
+        empty = length(trim(text)) = 0
+        
+        if not empty then
+            --format 
+            if state[sBOLD] then
+                eebax_StartElement(EEBAX,"strong",{},0)
+                htmlstack &= {"strong"}
+            end if
+            if state[sITALIC] then
+                eebax_StartElement(EEBAX,"em",{},0)
+                htmlstack &= {"em"}
+            end if
+            if state[sUNDERLINE] then
+                eebax_StartElement(EEBAX,"u",{},0)
+                htmlstack &= {"u"}
+            end if
+            
+            eebax_StartElement(EEBAX,"span",{{"style",sprintf("font-size: %dpt;font-family: %s; color: #%02x%02x%02x",{state[sFONTSIZE]/2,fonts[state[sFONT]+1]}&colors[state[sCOLOR]+1])}},0)
+            htmlstack &= {"span"}
+        end if
+        
+        --do character replacement
+        while 1 do
+            i = find('\n',text)
+            if i = 0 then
+                eebax_Characters(EEBAX,text)
+                exit
+            end if
+            if text[i] = '\n' then
+                eebax_Characters(EEBAX,text[1..i-1])
+                eebax_StartElement(EEBAX,"br",{},1)
+                text = text[i+1..length(text)]
+            end if
+        end while
+
+        for n = length(htmlstack) to 1 by -1 do
+            eebax_EndElement(EEBAX,htmlstack[n])
+        end for
+    end for
+    eebax_EndElement(EEBAX,"body")
+    eebax_EndElement(EEBAX,"html")
+    eebax_EndDocument(EEBAX)
+
+    return xmltree_CopyNode(xmltree_GetRootFromhInst(EEBAX))
+end function
+
+constant XML_RESERVED_CHARS = "<>&\'\""
+-- Retunrns text that has been escaped read for use with xhtmlrtf_XHTML2RTF
+global function xhtmlrtf_TEXT2XHTML(sequence Text)
+    Text = eebax_EncodeUTF8(Text)
+    for i = length(Text) to 1 by -1 do
+        if find(Text[i],XML_RESERVED_CHARS) then
+            Text = Text[1..i-1] & "&#" & sprint(Text[i]) & ";" & Text[i+1..length(Text)]
+        elsif Text[i] = '\n' then
+            Text = Text[1..i-1] & "<br/>" & Text[i+1..length(Text)]
+        end if
+    end for
+    return Text
+end function

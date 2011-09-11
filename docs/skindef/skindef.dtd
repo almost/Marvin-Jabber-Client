@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!ELEMENT skindef (description, (resource | message | textvariable | window)*)>
+<!ATTLIST skindef
+	name CDATA #REQUIRED
+>
+<!ELEMENT description (#PCDATA)>
+<!ELEMENT window (description, (area | message | textvariable)*)>
+<!ATTLIST window
+	name CDATA #REQUIRED
+>
+<!ELEMENT area (description, state*)>
+<!ATTLIST area
+	name CDATA #REQUIRED
+	required (true | false) #REQUIRED
+>
+<!ELEMENT state (description)>
+<!ATTLIST state
+	name CDATA #REQUIRED
+>
+<!ELEMENT message (description)>
+<!ATTLIST message
+	name CDATA #REQUIRED
+	required (true | false) #REQUIRED
+>
+<!ELEMENT resource (description, resource*)>
+<!ATTLIST resource
+	name CDATA #REQUIRED
+	required (true | false) #REQUIRED
+>
+
+<!ELEMENT textvariable (description)>
+<!ATTLIST textvariable
+	name CDATA #REQUIRED
+>

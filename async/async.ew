@@ -1,0 +1,407 @@
+-- Asynchronous Sockets
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+
+-- This will only work in win32lib applications where control has been given to win32lib (WinMain has been called)
+-- Calling it from any event is fine.
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include winsock.ew
+
+global constant
+         ASYNC_STATE_CLOSED          = 1,
+         ASYNC_STATE_LOOKINGUPHOST   = 2,
+         ASYNC_STATE_CONNECTING      = 3,
+         ASYNC_STATE_LISTENING       = 4,
+         ASYNC_STATE_CONNECTED       = 5,
+         ASYNC_STATE_CLOSING         = 6
+         
+global constant
+         ASYNC_CONNECTED         = 1,
+         ASYNC_RECIEVED          = 2,
+         ASYNC_CONNECTIONREQUEST = 3,
+         ASYNC_READY             = 4,
+         ASYNC_CLOSE             = 5
+         
+global constant
+        ASYNC_ERROR_NOERROR            = 0, -- No error has occured
+        ASYNC_ERROR_LOOKUPFAILED       = 1, -- Failed to lookup hostname
+        ASYNC_ERROR_CONNECTIONFAILED   = 3, -- The connection was broken
+        ASYNC_ERROR_CONNECTIONRESET    = 4, -- Connection was terminated by remote host
+        ASYNC_ERROR_UNKNOWN            = 5  -- Unknown or unexpected error
+
+sequence Sockets
+Sockets = {}
+constant sSOCKET    = 1, -- The winsock socket id
+         sPORT      = 2, -- Port to connect to
+         sLOOKUP    = 3, -- Buffer for async host lookup {id,buffer}
+         sSTATE     = 4, -- Current state of the connection
+         sOUTBUFFER = 5, -- Buffer for outgoing data
+         sLASTERROR = 6  -- Numeric error code
+constant NEW_SOCKET = {0,0,{0,0},ASYNC_STATE_CLOSED,"",ASYNC_ERROR_NOERROR}
+
+sequence EventHandlers
+EventHandlers = {}
+         
+constant SM_GETHOSTBYNAME     = WM_USER + 6,
+         SM_SOCKETEVENT       = WM_USER + 5
+         
+constant wndEvents = create(Window, "", 0,0, 0,0, 0, {} ) -- Used to recieve ASYNC events, never shown
+
+constant WSOCK_BLOCK_SIZE = 32768 --how many bytes to request from winsock, winsock will return as much as it can up to this number
+
+atom Initialized
+Initialized = 0
+
+-- BEGIN Utils
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+function Socket2Index(integer socket)
+    return sub_find(socket,Sockets,sSOCKET)
+end function
+
+procedure RaiseEvent(integer socket, integer event)
+    for i = 1 to length(EventHandlers) do
+        call_proc(EventHandlers[i],{socket,event})
+    end for
+end procedure
+
+-- END Utils
+
+-- BEGIN Properties
+
+global procedure async_AddEventHandler(integer routineid)
+    if not find(routineid,EventHandlers) and routineid != -1 then
+        EventHandlers &= routineid
+    end if
+end procedure
+
+global procedure async_RemoveEventHandler(integer routineid)
+    integer loc
+    loc = find(routineid,EventHandlers)
+    if loc then
+        EventHandlers = EventHandlers[1..loc-1]&EventHandlers[loc+1..length(EventHandlers)]
+    end if
+end procedure
+
+global function async_GetLastError(integer socket)
+    integer index
+    index = Socket2Index(socket)
+    if index = 0 then return -1 end if
+    return Sockets[index][sLASTERROR]
+end function
+
+global function async_GetState(integer socket)
+    integer index
+    index = Socket2Index(socket)
+    if index = 0 then return -1 end if
+    return Sockets[index][sSTATE]
+end function
+
+-- END Properties
+
+-- BEGIN Internals
+procedure CleanUpSocket(integer socket)
+    integer index
+    index = Socket2Index(socket)
+    
+    if Sockets[index][sLOOKUP][2] != 0 then
+        free(Sockets[index][sLOOKUP][2])
+        Sockets[index][sLOOKUP][2] = 0
+    end if
+    
+    WsockCloseSocket(socket)
+    
+    Sockets = Sockets[1..index-1] & Sockets[index+1..length(Sockets)]
+end procedure
+
+procedure SendBuffer(integer socket)
+    integer index,sent,error
+    index = Socket2Index(socket)
+    if length(Sockets[index][sOUTBUFFER]) = 0 then return end if
+    sent = WsockSendData(Sockets[index][sSOCKET],Sockets[index][sOUTBUFFER])
+    if sent = SOCKET_ERROR then
+        error = WSAGetLastError()
+        if error = WSAEWOULDBLOCK then
+            sent = 0
+        else
+            if error = WSAECONNABORTED then
+                Sockets[index][sLASTERROR] = ASYNC_ERROR_CONNECTIONFAILED
+            elsif error = WSAECONNRESET then
+                Sockets[index][sLASTERROR] = ASYNC_ERROR_CONNECTIONRESET
+            elsif error = WSAETIMEDOUT then
+                Sockets[index][sLASTERROR] = ASYNC_ERROR_CONNECTIONFAILED
+            else
+                Sockets[index][sLASTERROR] = ASYNC_ERROR_UNKNOWN
+            end if
+            socket = Sockets[index][sSOCKET]
+            RaiseEvent(Sockets[index][sSOCKET],ASYNC_CLOSE)
+            index = Socket2Index(socket) if index = 0 then return end if
+            CleanUpSocket(Sockets[index][sSOCKET])
+            return
+        end if
+    end if
+    Sockets[index][sOUTBUFFER] = Sockets[index][sOUTBUFFER][sent+1..length(Sockets[index][sOUTBUFFER])]
+    
+    if length(Sockets[index][sOUTBUFFER]) = 0 and Sockets[index][sSTATE] = ASYNC_STATE_CLOSING then
+        CleanUpSocket(Sockets[index][sSOCKET])
+    end if
+end procedure
+
+procedure wndEvents_onEvent( integer event, atom wParam, atom lParam)
+    integer error,index,socket
+    integer socketevent,socketerror
+    if not Initialized then
+        return
+    end if
+
+    if event = SM_GETHOSTBYNAME then  
+        -- This event is generated by a call to WSAAsyncGetHostByName
+        for i = 1 to length(Sockets) do
+            index = i
+            if Sockets[index][sSTATE] = ASYNC_STATE_LOOKINGUPHOST and Sockets[index][sLOOKUP][1] = wParam then
+                -- Check if there was an error doing host lookup
+                if hi_word(lParam) != 0 then
+                    Sockets[index][sLASTERROR] = ASYNC_ERROR_LOOKUPFAILED
+                    socket = Sockets[index][sSOCKET]
+                    RaiseEvent(Sockets[index][sSOCKET],ASYNC_CLOSE)
+                    index = Socket2Index(socket) if index = 0 then return end if
+                    CleanUpSocket(Sockets[index][sSOCKET])
+                    return
+                end if
+
+                -- Initiate the actual connection
+                Sockets[index][sSTATE] = ASYNC_STATE_CONNECTING
+                if WsockConnectAsync(Sockets[index][sSOCKET],Sockets[index][sPORT],Sockets[index][sLOOKUP][2]) = SOCKET_ERROR then
+                    Sockets[index][sLASTERROR] = ASYNC_ERROR_UNKNOWN
+                    socket = Sockets[index][sSOCKET]
+                    RaiseEvent(Sockets[index][sSOCKET],ASYNC_CLOSE)
+                    index = Socket2Index(socket) if index = 0 then return end if
+                    CleanUpSocket(Sockets[index][sSOCKET])
+                    return
+                end if               
+                
+                -- Free the host lookup buffer
+                free(Sockets[index][sLOOKUP][2])
+                Sockets[index][sLOOKUP][2] = 0
+                exit
+            end if
+        end for
+    elsif event = SM_SOCKETEVENT then
+        index = Socket2Index(wParam)
+        if index = 0 then
+            return
+        end if
+        socketevent = lo_word(lParam)
+        socketerror = hi_word(lParam)
+        if socketevent = FD_CONNECT and Sockets[index][sSTATE] = ASYNC_STATE_CONNECTING then
+            -- Connection has been established
+            -- First check for error
+            if socketerror != 0 then
+                error = WSAGetLastError()
+                if error = WSAECONNREFUSED then
+                    Sockets[index][sLASTERROR] = ASYNC_ERROR_CONNECTIONRESET
+                elsif error = WSAETIMEDOUT then
+                    Sockets[index][sLASTERROR] = ASYNC_ERROR_CONNECTIONFAILED
+                else
+                    Sockets[index][sLASTERROR] = ASYNC_ERROR_UNKNOWN
+                end if
+                socket = Sockets[index][sSOCKET]
+                RaiseEvent(Sockets[index][sSOCKET],ASYNC_CLOSE)
+                index = Socket2Index(socket) if index = 0 then return end if
+                CleanUpSocket(Sockets[index][sSOCKET])
+                return
+            end if
+            -- Connected!
+            Sockets[index][sSTATE] = ASYNC_STATE_CONNECTED
+            RaiseEvent(Sockets[index][sSOCKET],ASYNC_CONNECTED)
+            if length(Sockets[index][sOUTBUFFER]) > 0 then
+                SendBuffer(Sockets[index][sSOCKET])
+            end if
+        elsif socketevent = FD_ACCEPT then
+            -- A connection has been attempted to a listening socket
+            RaiseEvent(Sockets[index][sSOCKET],ASYNC_CONNECTIONREQUEST)
+        elsif socketevent = FD_WRITE then
+            -- If anything is waiting to be sent then now is the time...
+            if length(Sockets[index][sOUTBUFFER]) > 0 then
+                SendBuffer(Sockets[index][sSOCKET])
+                if length(Sockets[index][sOUTBUFFER]) = 0 then
+                    RaiseEvent(Sockets[index][sSOCKET],ASYNC_READY)
+                end if
+            end if
+        elsif socketevent = FD_READ then
+            -- Let the application know data is waiting
+            RaiseEvent(Sockets[index][sSOCKET],ASYNC_RECIEVED)
+        elsif socketevent = FD_CLOSE then
+            -- The socket has been closed
+            error = WSAGetLastError()
+            if error = WSAECONNRESET then
+                Sockets[index][sLASTERROR] = ASYNC_ERROR_CONNECTIONRESET
+            elsif error = WSAECONNABORTED then
+                Sockets[index][sLASTERROR] = ASYNC_ERROR_CONNECTIONFAILED
+            else
+                Sockets[index][sLASTERROR] = ASYNC_ERROR_UNKNOWN
+            end if
+            socket = Sockets[index][sSOCKET]
+            RaiseEvent(Sockets[index][sSOCKET],ASYNC_CLOSE)
+            index = Socket2Index(socket) if index = 0 then return end if
+            CleanUpSocket(Sockets[index][sSOCKET])
+            return
+        end if
+    end if
+end procedure
+onEvent[wndEvents] = routine_id("wndEvents_onEvent")
+-- END Internals
+
+-- BEGIN Methods
+global function async_Connect(sequence host, integer port)
+    integer index
+    -- The actual winsock socketid  is used to identifie the socket so it's created here (before it needs to be)
+    
+    if not Initialized then
+        if WsockInit() != 0 then
+            return SOCKET_ERROR
+        end if
+        Initialized = 1
+    end if
+    
+    Sockets = append(Sockets,NEW_SOCKET)
+    index = length(Sockets)
+    
+    -- Store the port for later
+    Sockets[index][sPORT] = port
+    
+    -- Create the socket
+    Sockets[index][sSOCKET] = WsockSocket (AF_INET,SOCK_STREAM)
+    if Sockets[index][sSOCKET] = SOCKET_ERROR then
+        return SOCKET_ERROR
+    end if
+    
+    -- Select the wndEvents window to recieve messages for the Socket
+    if WSAAsyncSelect(Sockets[index][sSOCKET],getHandle(wndEvents),SM_SOCKETEVENT,or_all({FD_READ,FD_CONNECT,FD_CLOSE,FD_WRITE})) = SOCKET_ERROR then
+        CleanUpSocket(Sockets[index][sSOCKET])
+        return SOCKET_ERROR
+    end if
+    
+    -- Set the state
+    Sockets[index][sSTATE] = ASYNC_STATE_LOOKINGUPHOST
+    
+    -- Initiate the the host lookup
+    Sockets[index][sLOOKUP] = allocate(MAXGETHOSTSTRUCT)
+    Sockets[index][sLOOKUP] = {WSAAsyncGetHostByName(getHandle(wndEvents),SM_GETHOSTBYNAME,host,Sockets[index][sLOOKUP],MAXGETHOSTSTRUCT),Sockets[index][sLOOKUP]}
+    if Sockets[index][sLOOKUP][1] = 0 then
+        CleanUpSocket(Sockets[index][sSOCKET])
+        return SOCKET_ERROR
+    end if
+    
+    return Sockets[index][sSOCKET]
+end function
+
+global function async_Listen(integer port)
+    integer index
+    
+    if not Initialized then
+        if WsockInit() != 0 then
+            return SOCKET_ERROR
+        end if
+        Initialized = 1
+    end if
+    
+    Sockets = append(Sockets,NEW_SOCKET)
+    index = length(Sockets)
+    
+    -- Store the port
+    Sockets[index][sPORT] = port
+    
+    -- Create the socket
+    Sockets[index][sSOCKET] = WsockListenAsync(Sockets[index][sPORT], getHandle(wndEvents), SM_SOCKETEVENT,
+                                 or_all({FD_READ,FD_ACCEPT,FD_CLOSE,FD_WRITE,FD_CONNECT}))
+    if Sockets[index][sSOCKET] = SOCKET_ERROR then
+        return SOCKET_ERROR
+    end if
+
+    -- Set the state
+    Sockets[index][sSTATE] = ASYNC_STATE_LISTENING
+    
+    return Sockets[index][sSOCKET]
+end function
+
+global function async_Accept(integer socket)
+    integer index,newindex,newsocket
+    index = Socket2Index(socket)
+    if index = 0 then return SOCKET_ERROR end if
+
+    -- Accept the connection
+    newsocket = WsockAccept(Sockets[index][sSOCKET])
+    if newsocket = SOCKET_ERROR then
+        return SOCKET_ERROR
+    end if
+
+    -- Create the needed data structures
+    Sockets = append(Sockets,NEW_SOCKET)
+    newindex = length(Sockets)
+    Sockets[newindex][sSOCKET] = newsocket
+    Sockets[newindex][sSTATE] = ASYNC_STATE_CONNECTED
+    return newsocket
+end function
+
+global function async_GetData(integer socket)
+    object data
+    data = WsockReadData(socket,WSOCK_BLOCK_SIZE)
+    if atom(data) then
+        data = ""
+    end if
+    return data
+end function
+
+-- Returns 1 if all data has been sent to winsock or 0 if it is being buffered (in which case a ReadyEvent will be triggered once it is sent)
+global function async_SendData(integer socket, sequence data)
+    integer index
+    index = Socket2Index(socket)
+    if index = 0 then return -1 end if
+    Sockets[index][sOUTBUFFER] &= data
+    if Sockets[index][sSTATE] = ASYNC_STATE_CONNECTED then
+        SendBuffer(Sockets[index][sSOCKET])
+    end if
+    return length(Sockets[index][sOUTBUFFER]) = 0
+end function
+
+global procedure async_Close(integer socket, integer immediate)
+    integer index
+    index = Socket2Index(socket)
+    if index = 0 then return end if
+    if immediate or length(Sockets[index][sOUTBUFFER]) = 0 then
+        CleanUpSocket(Sockets[index][sSOCKET])
+    else
+        Sockets[index][sSTATE] = ASYNC_STATE_CLOSING
+    end if
+end procedure
+-- END Methods

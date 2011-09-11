@@ -1,0 +1,545 @@
+-- ctlLog control definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+--TODO: Keep same position if scrolled up
+include xhtmlrtf.ew
+include jabber.ew
+include ctlRichEdit\ctlRichEdit_decs.ew
+include ctlRichEdit\ctlRichEdit_defs.ew
+include formatdatetime.ew
+
+constant HISTORY_DISABLED=xhtmlrtf_XHTML2RTF("<html><center><i>(message logging currently off)</i></center></html>",0)
+constant HISTORY_SEPERATOR=xhtmlrtf_XHTML2RTF("<html><center><b>--- Current Conversation ---</b></center></html>",0)
+atom HistorySeperatorLength
+
+--BEGIN INSTANCE UNIQUE VARS---------------
+sequence NickColors --specific to each jid {jid,color}
+NickColors = {}
+sequence ControlID
+ControlID = {}
+sequence OldOnEventHandler
+OldOnEventHandler = {}
+
+--History
+sequence History
+History = {}
+
+--END INSTANCE UNIQUE VARS---------------
+
+--History constants
+constant H_SHOW    = 1, --Is history shown?
+         H_JID     = 2,
+         H_RANGE   = 3,
+         H_LOADED  = 4, --List of loaded history items
+         H_SIZES   = 5
+
+constant emotecolor = {128,0,128}
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+function GetMessageRTF(integer index,sequence Message)
+    sequence body,nickrtf
+    object nick
+    object nickcolor
+    sequence SplitJID,SplitOwnJID
+    atom loc
+    atom withintag
+    
+    if Message[MESSAGE_ERRCODE] != 0 then
+        --This is a returned message, display error
+        return xhtmlrtf_XHTML2RTF(sprintf("<html><body><span style='color: #FF0000; font-family: %s;font-size: %dpt'>ERROR (%d): %s</span></body><br/></html>",
+            {settings_Get("MessageWin","DefaultFont"),settings_Get("MessageWin","DefaultFontSize"),Message[MESSAGE_ERRCODE],Message[MESSAGE_ERRMSG]}),0)
+    end if
+    
+    nick = jabber_rosterGetNick(Message[MESSAGE_FROM])
+    if atom(nick) or length(nick) = 0 then
+        nick = Message[MESSAGE_FROM]
+    end if
+    
+    if length(Message[MESSAGE_BODY]) > 4 and equal(Message[MESSAGE_BODY][1..4],"/me ") then
+        body = Message[MESSAGE_BODY][5..length(Message[MESSAGE_BODY])]
+        return xhtmlrtf_XHTML2RTF(sprintf("<html><body><span style='color: #%06x;font-family: %s;font-size: %dpt'>* ",
+                       {settings_Get("Colors","Emotes"),settings_Get("MessageWin","DefaultFont"),settings_Get("MessageWin","DefaultFontSize")}) & 
+                       xhtmlrtf_TEXT2XHTML(nick&" "&body)&"</span></body><br/></html>",0)
+    end if
+    
+    SplitJID = jabber_SplitJID(Message[MESSAGE_FROM])
+    loc = sub_find(lower(SplitJID[1]&"@"&SplitJID[2]),lower(NickColors[index]),1)
+    if loc != 0 then
+        nickcolor = NickColors[index][loc][2]
+    else
+        SplitOwnJID = jabber_SplitJID(jabber_CurrentJID())
+        if equal(lower(SplitJID[1]&"@"&SplitJID[2]),lower(SplitOwnJID[1]&"@"&SplitOwnJID[2])) then
+            nickcolor = settings_Get("Colors","OwnNick")
+        else
+            nickcolor = settings_Get("Colors","OthersNick")
+        end if
+    end if
+    
+    nickrtf = xhtmlrtf_XHTML2RTF(sprintf("<html><span style='font-family: %s;font-size: %dpt;color: #%06x'>",
+                                 {settings_Get("MessageWin","DefaultFont"),settings_Get("MessageWin","DefaultFontSize"),nickcolor})&
+                                 xhtmlrtf_TEXT2XHTML(nick)&": </span></html>",0)
+                                 
+    --If you remove the last character from an rtf document you can concatinate it
+    nickrtf = nickrtf[1..length(nickrtf)-1]
+    
+    if  Message[MESSAGE_HTML] = 0 then
+        --body = "<body>"&xml_EscapeInvalidChars(Message[MESSAGE_BODY])&"</body>"
+        body = Message[MESSAGE_BODY]
+        --Cut trailing newlines
+        for i = length(body) to 1 by -1 do
+            if body[i] = '\n' then
+                body = body[1..i-1]&body[i+1..length(body)]
+            elsif not find(body[i]," \t") then
+                exit
+            end if
+        end for
+        body = xhtmlrtf_XHTML2RTF(sprintf("<html><span style='font-family: %s;font-size: %dpt;color: #000000'>",
+                                 {settings_Get("MessageWin","DefaultFont"),settings_Get("MessageWin","DefaultFontSize")})&
+                                 xhtmlrtf_TEXT2XHTML(body)&"</span></html>",0)
+    else
+        body = xhtmlrtf_XHTML2RTF(Message[MESSAGE_HTML],0)
+        --Cut trailing newlines
+        for i = length(body) to 4 by -1 do
+            if equal(body[i-3..i],"\\par") then
+                body = body[1..i-4]&body[i+1..length(body)]
+            elsif not find(body[i]," {}\n\t") then
+                exit
+            end if
+        end for
+    end if  
+    return nickrtf & body[1..length(body)-1] & "\\par "
+end function
+
+--Convert a char position to a history index
+function CharPosToHistory(integer index, integer charpos)
+    atom curpos
+    if charpos = -1 then return length(History[index][H_SIZES]) end if
+    curpos = 0
+    for i = 1 to length(History[index][H_SIZES]) do
+        curpos += History[index][H_SIZES][i]
+        if curpos >= charpos then
+            return i
+        end if
+    end for
+    return -1
+end function
+
+function HistoryToCharPos(integer index, integer hist) --Will NOT work effectivly for loaded history items
+    integer charpos
+    charpos = 0
+    for i = 1 to hist-1 do
+        charpos += History[index][H_SIZES][i]
+    end for
+    return charpos
+end function
+
+function EstimateLinesInView(integer index)
+    sequence extent,rect
+    extent = getTextExtent(ctlrichedit_Win32LibID(ControlID[index])," ")
+    rect = getRect(ctlrichedit_Win32LibID(ControlID[index]))
+    return floor((rect[4]-rect[2])/extent[2])
+end function
+
+constant DAYS_OF_WEEK = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"},
+         MONTHS_OF_YEAR = {"January","February","March","April","May","June","July","August","September","October","November","December"}
+
+--Replace any placeholders that are in view
+integer ReplacePlaceholders_running --some calls in this routine may cause it to be called again, this flag tracs whether it is allready running
+ReplacePlaceholders_running = 0
+procedure ReplacePlaceholders(integer index)
+    integer hfrom,hto,charfrom,charto
+    atom textlength,scrollpos
+    sequence message,datetime,temp
+    object buffer
+    integer CurLine,flush,linesinview
+ 
+    if ReplacePlaceholders_running then return end if --if this routine is allready running then don't start running it again
+    ReplacePlaceholders_running = 1
+    
+    CurLine = ctlrichedit_GetFirstVisibleLine(ControlID[index])
+    
+    --Find the first visble message
+    hfrom = CharPosToHistory(index,ctlrichedit_GetFirstVisibleChar(ControlID[index]))
+    if hfrom != -1 then
+        --Decide on the first and last messages to display
+        --Much more efficient to load lots over..
+        linesinview = EstimateLinesInView(index)
+        hto = floor(hfrom+linesinview*1.5)
+        if hto > History[index][H_RANGE][2] then
+            hto = History[index][H_RANGE][2]
+        end if
+        hfrom -= floor(linesinview*.5)
+        if hfrom < History[index][H_RANGE][1] then
+            hfrom = History[index][H_RANGE][1]
+        end if
+        --hfrom = History[index][H_RANGE][1] --DEBUG
+        --hto = History[index][H_RANGE][2] --DEBUG 
+        --Display messages between hfrom and hto
+        buffer = 0
+        for i = hfrom to hto do
+            flush = 0
+            --Check that the message has not allready been displayed
+            if find(i,History[index][H_LOADED]) = 0 then
+                --Get the position of the messages placeholder
+                charto = HistoryToCharPos(index,i)
+                if atom(buffer) then
+                    charfrom = charto
+                    buffer = ""
+                end if
+                --Get the message itself
+                message = log_GetMessage(History[index][H_JID],i)
+                --If necessary add a day seperator
+                datetime = log_MessageTimes(History[index][H_JID],i)
+                datetime = datetime[1]
+                if settings_Get("History","DayHeaders") then
+                    if i != 1 then
+                        temp = log_MessageTimes(History[index][H_JID],i-1)
+                        temp = temp[1]
+                    end if
+                    if i = 1 or daysDifference(temp[DT_DATE],datetime[DT_DATE]) != 0 then
+                        buffer &= xhtmlrtf_XHTML2RTF("<html><center><b>--- " & formatdatetime_FormatDate(datetime[DT_DATE],1) & " ---</b></center></html>",0)
+                        -- Last character of rtf must be removed for concatination
+                        --buffer = buffer[1..length(buffer)-1]
+                    end if
+                end if
+                --Add time/date stamp
+                if settings_Get("History","DateStamps") then
+                    buffer &= "{\\pard [" & formatdatetime_FormatDateTime(datetime) & "] }"
+                    -- Last character of rtf must be removed for concatination
+                    --buffer = buffer[1..length(buffer)-1]
+                end if
+                --Add it to the buffer
+                buffer &= GetMessageRTF(index,message[1])
+                --Make an entry in the H_LOADED list
+                History[index][H_LOADED] &= i
+                if abs(CurLine-ctlrichedit_GetFirstVisibleLine(ControlID[index])) > linesinview then
+                    flush = 1
+                end if
+            end if
+            
+            if (find(i+1,History[index][H_LOADED]) != 0 or i = hto or flush) and sequence(buffer) then
+                --Count the characters in the textbox before adding the new message
+                textlength = ctlrichedit_GetCharCount(ControlID[index])
+                --store the scroll position
+                scrollpos = ctlrichedit_GetScrollPos(ControlID[index])
+                --Display the message
+                ctlrichedit_SetText(ControlID[index],CTLRICHEDIT_RTF,{charfrom,charto+1},buffer)
+                --Restore the scroll position
+                ctlrichedit_SetScrollPos(ControlID[index],scrollpos)
+                --Now find how large the message was
+                textlength = (ctlrichedit_GetCharCount(ControlID[index]) - textlength) +1
+                --Update the size array
+                
+                History[index][H_SIZES][i] = textlength
+                buffer = 0
+                CurLine = ctlrichedit_GetFirstVisibleLine(ControlID[index])
+                flush = 1
+            end if
+            
+            if flush then
+                ReplacePlaceholders_running = 0
+                ReplacePlaceholders(index)
+                return
+            end if
+        end for
+    end if
+    ReplacePlaceholders_running = 0
+end procedure
+
+procedure ScrollEvent(integer index)
+    index = find(index,ControlID)
+    if sequence(History[index]) then
+        ReplacePlaceholders(index)
+    end if
+end procedure
+
+global procedure ctllog_HideHistory(integer index)
+    atom HistEnd
+    if atom(History[index]) or not History[index][H_SHOW] then return end if --if history hasn't yet been loaded
+    HistEnd = 0
+    for i = 1 to length(History[index][H_SIZES]) do
+        HistEnd += History[index][H_SIZES][i]
+    end for
+    --Remove all the history
+    History[index][H_SHOW] = 0
+    History[index][H_LOADED] = {}
+    History[index][H_SIZES] = {}
+    ctlrichedit_SetText(ControlID[index],CTLRICHEDIT_TEXT,{0,HistEnd+HistorySeperatorLength},"")
+end procedure
+
+-- SEARCHING IN AN UPWARD DIRECTION DOES NOT YET WORK
+procedure Search(integer index, sequence searchstring,atom flags,atom searchall)
+    atom textloc,histloc,charpos,nextunloadedhist
+    sequence selrange
+    atom searchfrom,HistEnd,charcount
+    atom searchto --can be 0 or -1
+    sequence extent
+    
+    selrange = ctlrichedit_GetSelRange(ControlID[index])
+    
+    --Get a range for the search
+    if and_bits(flags,LOG_SEARCHDOWN)=LOG_SEARCHDOWN then
+        if searchall then
+            searchfrom = 0
+        else
+            searchfrom = selrange[2]
+        end if
+        searchto = -1
+    else
+        if searchall then
+            searchfrom = ctlrichedit_GetCharCount(ControlID[index])
+        else
+            searchfrom = selrange[1]
+        end if
+        searchto = 0
+    end if
+    
+    --Find which bits of the rich text are history and which bits are current chat (both are searched but there are differences)
+    HistEnd = 0
+    for i = 1 to length(History[index][H_SIZES]) do
+        HistEnd += History[index][H_SIZES][i]
+    end for
+    
+    textloc = findText(ctlrichedit_Win32LibID(ControlID[index]),searchstring,{searchfrom,searchto},(findDown*(and_bits(flags,LOG_SEARCHDOWN)=LOG_SEARCHDOWN))+
+                                                                                (findWholeWord*(and_bits(flags,LOG_SEARCHWHOLEWORDS)=LOG_SEARCHWHOLEWORDS))+
+                                                                                (findMatchCase*(and_bits(flags,LOG_SEARCHCASESENSITIVE)=LOG_SEARCHCASESENSITIVE)))-1
+    if not atom(History[index]) and History[index][H_SHOW] and (searchfrom < HistEnd or and_bits(flags,LOG_SEARCHDOWN)!=LOG_SEARCHDOWN) then
+        nextunloadedhist = CharPosToHistory(index,searchfrom)
+        --if textloc != -1 then
+        if and_bits(flags,LOG_SEARCHDOWN)=LOG_SEARCHDOWN then
+            for i = nextunloadedhist to History[index][H_RANGE][2] do
+                nextunloadedhist = i
+                if not find(i,History[index][H_LOADED]) then
+                    exit
+                end if
+            end for
+        else
+            for i = nextunloadedhist to 1 by -1 do
+                nextunloadedhist = i
+                if not find(i,History[index][H_LOADED]) then
+                    exit
+                end if
+            end for
+        end if
+        --end if
+        if textloc = -1 or textloc > HistEnd or
+           (and_bits(flags,LOG_SEARCHDOWN)=LOG_SEARCHDOWN and textloc > HistoryToCharPos(index,nextunloadedhist)) or
+           (and_bits(flags,LOG_SEARCHDOWN)!=LOG_SEARCHDOWN and textloc < HistoryToCharPos(index,nextunloadedhist)) then
+            histloc = log_Search(History[index][H_JID],nextunloadedhist,searchstring,flags)
+            --If a history item was found and it's not allready loaded then load it 
+            if histloc > 0 and find(histloc,History[index][H_LOADED]) = 0 then
+                charpos = HistoryToCharPos(index,histloc)
+                charcount = ctlrichedit_GetCharCount(ControlID[index])
+                --Skipping to where the message should be will cause it to load
+                ctlrichedit_SetSelRange(ControlID[index],{charpos,charpos})
+                --If is a upward search then adding the new message will have messed up the positions
+                if and_bits(flags,LOG_SEARCHDOWN)!=LOG_SEARCHDOWN then
+                    charcount = ctlrichedit_GetCharCount(ControlID[index])-charcount
+                    selrange += charcount
+                    searchfrom += charcount
+                end if
+                ctlrichedit_SetSelRange(ControlID[index],selrange)
+                --Now that we've loaded more there might be a nearer match for the searchstring
+                textloc = findText(ctlrichedit_Win32LibID(ControlID[index]),searchstring,{searchfrom,searchto},(findDown*(and_bits(flags,LOG_SEARCHDOWN)=LOG_SEARCHDOWN))+
+                                                                                                (findWholeWord*(and_bits(flags,LOG_SEARCHWHOLEWORDS)=LOG_SEARCHWHOLEWORDS))+
+                                                                                                (findMatchCase*(and_bits(flags,LOG_SEARCHCASESENSITIVE)=LOG_SEARCHCASESENSITIVE)))-1
+            elsif histloc = -1 then
+                --Search was canceld
+                return
+            end if
+        end if
+    end if
+    
+    if textloc != -1 then
+        -- A had some problems with the selection not always showing up,
+        -- selecting it twice (letting events happen in between) seems to get it working fine
+        ctlrichedit_SetSelRange(ControlID[index],{textloc,textloc+length(searchstring)})
+        doEvents(0)
+        ctlrichedit_SetSelRange(ControlID[index],{textloc,textloc+length(searchstring)})
+    elsif not searchall then
+        --Wrap the search
+        Search(index,searchstring,flags,1)
+    else
+        if message_box("Cannot find \""&searchstring&"\"", CLIENT_NAME_SHOW, MB_ICONINFORMATION) then end if
+    end if
+end procedure
+
+constant uFindReplaceMsg=w32Func( RegisterWindowMessage, { FINDMSGSTRING } )
+procedure parentwindow_OnEvent(atom event, atom wParam, atom lParam)
+    atom index,flags
+    sequence text
+    
+    index = -1
+    --Call any old handler
+    for i = 1 to length(ControlID) do
+        if ctlrichedit_Win32LibID(ControlID[i]) != -1 and findParentWindow(ctlrichedit_Win32LibID(ControlID[i])) = getSelf() then
+            index = i
+            if OldOnEventHandler[i] != -1 then
+                call_proc(OldOnEventHandler[i],{event,wParam,lParam})
+            end if
+        end if
+    end for
+    if index = -1 then return end if
+    
+    if event = uFindReplaceMsg then
+        flags = fetch( lParam, FINDREPLACE_Flags )
+        if and_bits(flags,FR_FINDNEXT) then
+            --Find button has been clicked
+            Search(index,
+                   fetch( lParam, FINDREPLACE_lpstrFindWhat ),
+                   (LOG_SEARCHWHOLEWORDS*(and_bits(flags,FR_WHOLEWORD)=FR_WHOLEWORD))+
+                   (LOG_SEARCHCASESENSITIVE*(and_bits(flags,FR_MATCHCASE)=FR_MATCHCASE))+
+                   --(LOG_SEARCHDOWN*(and_bits(flags,FR_DOWN)=FR_DOWN))+
+                   LOG_SEARCHDOWN+
+                   LOG_SEARCHSENT+LOG_SEARCHRECEIVED,0)
+        elsif and_bits(flags,FR_DIALOGTERM) then
+            if not atom(History[index]) then
+                log_CancelSearch(History[index][H_JID])
+            end if
+        end if
+    end if
+end procedure
+
+--Display a find dialog box
+global procedure ctllog_Search(integer index)
+    atom fr, dlg
+    fr = struct_FINDREPLACE( getHandle(findParentWindow(ctlrichedit_Win32LibID(ControlID[index]))), FR_HIDEUPDOWN, "", "" )
+    dlg = w32Func( FindTextA, { fr } )
+    if ctlrichedit_Win32LibID(ControlID[length(ControlID)]) != -1 and onEvent[findParentWindow(ctlrichedit_Win32LibID(ControlID[length(ControlID)]))] != routine_id("parentwindow_OnEvent") then
+        --OldOnEventHandler[index] = onEvent[findParentWindow(ctlrichedit_Win32LibID(ControlID[length(ControlID)]))]
+        onEvent[findParentWindow(ctlrichedit_Win32LibID(ControlID[length(ControlID)]))] = routine_id("parentwindow_OnEvent")
+    end if
+end procedure
+
+global procedure ctllog_ShowHistory(integer index)
+    sequence Range
+    if atom(History[index]) or History[index][H_SHOW] then return end if
+
+    --Place history seperator
+    HistorySeperatorLength = ctlrichedit_GetCharCount(ControlID[index])
+    ctlrichedit_SetText(ControlID[index],CTLRICHEDIT_RTF,{0,0},HISTORY_SEPERATOR)
+    if not settings_Get("Security","LogMessages") then  
+        ctlrichedit_SetText(ControlID[index],CTLRICHEDIT_RTF,{0,0},HISTORY_DISABLED)
+    end if
+    HistorySeperatorLength = ctlrichedit_GetCharCount(ControlID[index])-HistorySeperatorLength    
+    --Put in the placeholders
+    ctlrichedit_SetText(ControlID[index],CTLRICHEDIT_TEXT,{0,0},repeat('\n',History[index][H_RANGE][2]-History[index][H_RANGE][1]+1))
+    --Set the show flag
+    History[index][H_SHOW] = 1
+    History[index][H_LOADED] = {}
+    History[index][H_SIZES] = repeat(1,History[index][H_RANGE][2]-History[index][H_RANGE][1]+1)
+    ReplacePlaceholders(index)
+    --Set the cursor to the end
+    ctlrichedit_SetText(ControlID[index],CTLRICHEDIT_TEXT,{-1,-1},"")
+
+    --Search(index,"things",LOG_SEARCHWHOLEWORDS+LOG_SEARCHDOWN+LOG_SEARCHSENT+LOG_SEARCHRECEIVED)
+end procedure
+
+procedure HistorySettingChange()
+    for i = 1 to length(History) do
+        if sequence(History[i]) and History[i][H_SHOW] then
+            ctllog_HideHistory(i)
+            ctllog_ShowHistory(i)
+        end if
+    end for
+end procedure
+settings_NotifyOnChange("History","DayHeaders",routine_id("HistorySettingChange"))
+settings_NotifyOnChange("History","DateStamps",routine_id("HistorySettingChange"))
+
+--Should be called before any messages are displayed
+global procedure ctllog_InitHistory(integer index, sequence JID)
+    if sequence(History[index]) then    
+        return
+    end if
+    History[index] = {0,JID,{1,log_MessageCount(JID)},{},{}}
+end procedure
+
+global procedure ctllog_AddMessage(integer index, sequence Message)
+    --puts(1,GetMessageRTF(index,Message)&"\n******\n")
+    ctlrichedit_SetText(ControlID[index],CTLRICHEDIT_RTF,CTLRICHEDIT_ADD,GetMessageRTF(index,Message))
+end procedure
+
+constant OK_URITYPES = {"http","ftp","mailto","gopher"}
+sequence mousedownuri
+mousedownuri = ""
+-- This event is called when a mouse event occurs over a link in the richedit
+procedure Hyperlink(integer id, atom message, sequence uri)
+    atom index,loc
+    sequence uritype
+    index = find(id,ControlID)
+    
+    loc = find(':',uri)
+    if not loc then
+        return
+    end if
+    uritype = uri[1..loc-1]
+    
+    if message = WM_LBUTTONDOWN then
+        mousedownuri = uri
+    elsif message = WM_LBUTTONUP then
+        if find(uritype,OK_URITYPES) and equal(mousedownuri,uri) then
+            shellExecute("open", uri, SW_SHOWNORMAL)
+        end if
+    end if
+end procedure
+
+global function ctllog_Create(atom winid, sequence mainarea, sequence scrollarea)
+    ControlID &= ctlrichedit_Create(winid,mainarea,scrollarea,1)
+    ctlrichedit_SetDefaultFont(ControlID[length(ControlID)],settings_Get("MessageWin","DefaultFont"))
+    ctlrichedit_SetDefaultFontSize(ControlID[length(ControlID)],settings_Get("MessageWin","DefaultFontSize"))
+    ctlrichedit_SetReadOnly(ControlID[length(ControlID)],1)
+    ctlrichedit_SetScrollEvent(ControlID[length(ControlID)],routine_id("ScrollEvent"))
+    ctlrichedit_SetHyperlinkEvent(ControlID[length(ControlID)],routine_id("Hyperlink"))
+    --if sendMessage(ControlIDs[length(ControlIDs)],EM_AUTOURLDETECT,1,0) then end if
+    NickColors = append(NickColors,{})
+    History = append(History,0)
+    
+    OldOnEventHandler &= onEvent[findParentWindow(ctlrichedit_Win32LibID(ControlID[length(ControlID)]))]
+    
+    return length(ControlID)
+end function
+
+global procedure ctllog_Destroy(integer index)
+    NickColors[index] = {}
+    History[index] = 0
+    ctlrichedit_Destroy(ControlID[index])
+end procedure
+
+global procedure ctllog_PresenceChange(integer index,sequence JID)
+    sequence Status
+    if not settings_Get("MessageWin","DisplayInNewWindow") and settings_Get("MessageWin","ShowPresenceInChat") then
+        Status = jabber_rosterGetStatus(JID)
+        ctlrichedit_SetText(ControlID[index],CTLRICHEDIT_HTML,CTLRICHEDIT_ADD,sprintf("<message><body><span style='color: #%06x;font-family: %s;font-size: %dpt'>%s</span></body><br/></message>",
+                           {settings_Get("Colors","StatusChanges"),settings_Get("MessageWin","DefaultFont"),settings_Get("MessageWin","DefaultFontSize"),
+                           xhtmlrtf_TEXT2XHTML(jabber_rosterGetNick(JID)&"'s status has changed to \""&JABBER_SHOW_STATES_FRIENDLY[Status[1]]&"\": "&Status[2])}))
+    end if
+end procedure

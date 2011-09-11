@@ -1,0 +1,157 @@
+-- wndShowState window definitions
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+--This window is not skinable
+
+function GetSelectedShowState()
+    if isChecked(wndshowstate_radAvailable) then
+        return JABBER_SHOWSTATE_AVAILABLE
+    elsif isChecked(wndshowstate_radChat) then
+        return JABBER_SHOWSTATE_CHAT
+    elsif isChecked(wndshowstate_radAway) then
+        return JABBER_SHOWSTATE_AWAY
+    elsif isChecked(wndshowstate_radXA) then
+        return JABBER_SHOWSTATE_XA
+    elsif isChecked(wndshowstate_radDND) then
+        return JABBER_SHOWSTATE_DND
+    end if
+    return -1
+end function
+
+function split(sequence s,atom delimiter)
+    atom loc
+    sequence ret
+    ret = {}
+    loc = find(delimiter,s)
+    while loc != 0 do
+        ret = append(ret,s[1..loc-1])
+        s = s[loc+1..length(s)]
+        loc = find(delimiter,s)
+    end while
+    if length(s) != 0 then
+        ret = append(ret,s)
+    end if
+    return ret
+end function
+
+function unsplit(sequence s,atom delimiter)
+    sequence ret
+    if length(s) = 0 then
+        return ""
+    else
+        ret = ""
+        for i = 1 to length(s)-1 do
+            ret &= s[i]&";"
+        end for
+        return ret&s[length(s)]
+    end if
+end function
+
+procedure PopulateCombo()
+    sequence list,ShowState
+    eraseItems(wndshowstate_cboStatusMessage)
+    list = split(settings_Get("Status",JABBER_SHOW_STATES[GetSelectedShowState()] & "Presets"),';')
+    if not find(settings_Get("Status","Default"&JABBER_SHOW_STATES[GetSelectedShowState()]),list) then
+        list = prepend(list,settings_Get("Status","Default"&JABBER_SHOW_STATES[GetSelectedShowState()]))
+    end if
+    for i = 1 to length(list) do
+        if length(list[i]) > 0 then
+            addItem(wndshowstate_cboStatusMessage,list[i])
+        end if
+    end for
+    
+    ShowState = jabber_GetShowState()
+    if GetSelectedShowState() = ShowState[1] then
+        setText(wndshowstate_cboStatusMessage,ShowState[2])
+    else
+        setText(wndshowstate_cboStatusMessage,settings_Get("Status","Default"&JABBER_SHOW_STATES[GetSelectedShowState()]))
+    end if
+end procedure
+
+global procedure wndshowstate_Open()
+    sequence ShowState
+    ShowState = jabber_GetShowState()
+    if ShowState[1] = JABBER_SHOWSTATE_AVAILABLE then
+        setCheck(wndshowstate_radAvailable,1)
+    elsif ShowState[1] = JABBER_SHOWSTATE_CHAT then
+        setCheck(wndshowstate_radChat,1)
+    elsif ShowState[1] = JABBER_SHOWSTATE_AWAY then
+        setCheck(wndshowstate_radAway,1)
+    elsif ShowState[1] = JABBER_SHOWSTATE_XA then
+        setCheck(wndshowstate_radXA,1)
+    elsif ShowState[1] = JABBER_SHOWSTATE_DND then
+        setCheck(wndshowstate_radDND,1)
+    end if
+    PopulateCombo()
+    openWindow(wndShowState,Normal)    
+end procedure
+
+global procedure wndshowstate_Close()
+    closeWindow(wndShowState)
+end procedure
+
+procedure onClick_Ok()
+    atom loc
+    sequence list
+
+    jabber_SetShowState(GetSelectedShowState(),getText(wndshowstate_cboStatusMessage))
+
+    -- Save as preset    
+    list = split(settings_Get("Status",JABBER_SHOW_STATES[GetSelectedShowState()] & "Presets"),';')
+    if find(getText(wndshowstate_cboStatusMessage),list) = 0 then
+        list = append(list,getText(wndshowstate_cboStatusMessage))
+        loc = find(settings_Get("Status","Default"&JABBER_SHOW_STATES[GetSelectedShowState()]),list)
+        if loc != 0 then
+            list = list[1..loc-1]&list[loc+1..length(list)]
+        end if
+        settings_Save("Status",JABBER_SHOW_STATES[GetSelectedShowState()] & "Presets",unsplit(list,';'))
+    end if
+    
+    wndshowstate_Close()
+end procedure
+
+procedure DeletePreset()
+    atom loc
+    sequence list
+    list = split(settings_Get("Status",JABBER_SHOW_STATES[GetSelectedShowState()] & "Presets"),';')
+    loc = find(getText(wndshowstate_cboStatusMessage),list)
+    if loc != 0 then
+        list = list[1..loc-1]&list[loc+1..length(list)]
+        settings_Save("Status",JABBER_SHOW_STATES[GetSelectedShowState()] & "Presets",unsplit(list,';'))
+    end if
+    setText(wndshowstate_cboStatusMessage,"")
+    PopulateCombo()
+end procedure
+
+onClick[wndshowstate_cmdDelete] = routine_id("DeletePreset")
+
+onClick[wndshowstate_radAvailable] = routine_id("PopulateCombo")
+onClick[wndshowstate_radChat] = routine_id("PopulateCombo")
+onClick[wndshowstate_radAway] = routine_id("PopulateCombo")
+onClick[wndshowstate_radXA] = routine_id("PopulateCombo")
+onClick[wndshowstate_radDND] = routine_id("PopulateCombo")
+
+onClick[wndshowstate_cmdOK] = routine_id("onClick_Ok")
+onClick[wndshowstate_cmdCancel] = routine_id("wndshowstate_Close")

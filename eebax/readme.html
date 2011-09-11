@@ -1,0 +1,321 @@
+<html>
+<head><title>EEBAX Readme</title></head>
+<body>
+<center>
+<h1>EEBAX</h1>
+<em>Euphoria Event Based API for XML</em><br/>
+Copyright (c) Thomas Parslow 2002<br/>
+<a href="mailto:tom@almostobsolete.net">tom@almostobsolete.net</a>
+</center>
+
+<a href="#1"><h1>1 Introduction</h1></a>
+<a href="#2"><h1>2 Usage</h1></a>
+<a href="#2.1"><h2>2.1 Parsing</h2></a>
+<a href="#2.2"><h2>2.2 XML Creation</h2></a>
+<a href="#3"><h1>3 Reference</h1></a>
+<a href="#3.1"><h2>3.1 Events</h2></a>
+
+<a href="#StartDocument"><h3>StartDocument</h3></a>
+<a href="#EndDocument"><h3>EndDocument</h3></a>
+<a href="#StartElement"><h3>StartElement</h3></a>
+<a href="#EndElement"><h3>EndElement</h3></a>
+<a href="#Characters"><h3>Characters</h3></a>
+<a href="#Comment"><h3>Comment</h3></a>
+<a href="#ParseError"><h3>ParseError</h3></a>
+<a href="#IgnorableWhitespace"><h3>IgnorableWhitespace</h3></a>
+<a href="#ProcessingInstruction"><h3>ProcessingInstruction</h3></a>
+<a href="#StartPrefixMapping"><h3>StartPrefixMapping</h3></a>
+<a href="#EndPrefixMapping"><h3>EndPrefixMapping</h3></a>
+<a href="#XML"><h3>XML</h3></a>
+
+<a href="#3.2"><h2>3.2 General</h2></a>
+
+<a href="#eebax_NewInstance"><h3>eebax_NewInstance</h3></a>
+<a href="#eebax_DestroyInstance"><h3>eebax_DestroyInstance</h3></a>
+<a href="#eebax_ResetInstance"><h3>eebax_ResetInstance</h3></a>
+<a href="#eebax_StartDocument"><h3>eebax_StartDocument</h3></a>
+<a href="#eebax_EndDocument"><h3>eebax_EndDocument</h3></a>
+
+<a href="#3.3"><h2>3.3 Parsing</h2></a>
+
+<a href="#eebax_Parse"><h3>eebax_Parse</h3></a>
+
+<a href="#3.4"><h2>3.4 XML Creation</h1></a>
+
+<a href="#eebax_StartElement"><h3>eebax_StartElement</h3></a>
+<a href="#eebax_EndElement"><h3>eebax_EndElement</h3></a>
+<a href="#eebax_Characters"><h3>eebax_Characters</h3></a>
+<a href="#eebax_ProcessingInstruction"><h3>eebax_ProcessingInstruction</h3></a>
+<a href="#eebax_Comment"><h3>eebax_Comment</h3></a>
+
+<a href="#3.5"><h2>3.4 Utilities</h1></a>
+
+<a href="#eebax_EncodeUTF8"><h3>eebax_EncodeUTF8</h3></a>
+<a href="#eebax_DecodeUTF8"><h3>eebax_DecodeUTF8</h3></a>
+<a href="#eebax_EncodeUTF16"><h3>eebax_EncodeUTF16</h3></a>
+<a href="#eebax_DecodeUTF16"><h3>eebax_DecodeUTF16</h3></a>
+
+<a name="1"><h1>1 Introduction</h1></a>
+<p>
+EEBAX is my second attempt at an XML parser, my first was xml.e (available on the <a href="http://www.rapideuphoria.com/cgi-bin/asearch.exu?gen=on&keywords=xml">Euphoria archive page</a>) which was not very good at all (it was slow, not at all compliant ect), EEBAX should be a lot better :)</p>
+
+<p>EEBAX is an event based parser, this means that for each bit of XML it encounters (for example a opening or closing tag or some character data) it will generate an event which the calling application can proccess. This is a lot more flexible than loading the entire XML document into a structure in memory (or a sequence) and returing that. The application can build it's own structures using the events (or use xmltree.e).</p>
+
+<p>EEBAX can also be used to create XML (using the onXML event)</p>
+
+<a name="2"><h1>2 Usage</h1></a>
+
+<a name="2.1"><h2>2.1 Parsing</h2></a>
+
+<p>See example1.ex.</p>
+
+<p>To use EEBAX you must first create a parser instance, you can do this with the eebax_NewInstance function:</p>
+<pre>
+    atom eebax
+    eebax = eebax_NewInstance()
+</pre>
+<p>Each instance can only proccess one document at a time but you can create as many instances as you need.</p>
+
+<p>Now add some event handlers for the events you wish to proccess (see below for a full list of availble events), these will be called as the document is parsed:</p>
+<pre>
+    procedure onStartElement(integer hInst,sequence Uri, sequence LocalName, sequence QName, sequence Atts)
+        puts(1,"Start Element: " & QName & "\n")
+    end procedure
+
+    procedure onEndElement(integer hInst,sequence Uri, sequence LocalName, sequence QName)
+        puts(1,"End Element: " & QName & "\n")
+    end procedure
+
+    procedure onCharacters(integer hInst,sequence Chars)
+        puts(1,"Character Data: " & Chars & "\n")
+    end procedure
+</pre>
+<p>Next assign the events to the apropriate handlers:</p>
+<pre>
+    eebax_SetStartElementEvent(eebax,routine_id("onStartElement"))
+    eebax_SetEndElementEvent(eebax,routine_id("onEndElement"))
+    eebax_SetCharactersEvent(eebax,routine_id("onCharacters"))
+</pre>
+<p>When you are ready to start proccessing an XML document call the eebax_StartDocument procedure, this prepares the instance to recieve a document:</p>
+<pre>
+    eebax_StartDocument(eebax)
+</pre>
+<p>Next call eebax_Parse one or more times until you have passed the whole document to it, as you call eebax_Parse the events you definded above will be called appropriately. eebax_Parse will normaly return 1 but if there is a parser error it will return 0 (in addition to calling the Error event if it is handled).</p>
+<pre>
+    atom fn
+    sequence in
+
+    fn = open("test.xml","rb")
+    if fn = -1 then
+        puts(1,"Unable to open test.xml")
+        abort(1)
+    end if
+    while 1 do
+        -- We're reading in one kilobyte at a time from the file
+        in = get_bytes(fn,1024)
+        if not eebax_Parse(eebax,in) then
+            puts(1,"XML document invalid")
+            abort(1)
+        end if
+        if length(in) &lt; 1024 then
+            exit
+        end if
+    end while
+    -- Close the file
+    close(fn)
+</pre>
+<p>When you have passed the whole document to eebax_Parse call eebax_EndDocument, the EEBAX instance will be set back to the state it was when you first created it and can be used to parse further XML documents.</p>
+<pre>
+    eebax_EndDocument(eebax)
+</pre>
+<p>Finnaly, when you no longer have any use for the parser instance you should destroy it with eebax_DestroyInstance:</p>
+<pre>
+    eebax_DestroyInstance(eebax)
+</pre>
+<p>This will free up any resources used.</p>
+
+<h2>2.2 XML Creation</h2></a>
+
+<p>See example2.ex</p>
+
+<p>To have EEBAX create XML for you first create an instance of the parser as you would when for parsing a document, then create a handler to handle the outputed XML:</p>
+<pre>
+    atom eebax
+    eebax = eebax_NewInstance()
+
+    -- All this example handler does is print the XML to the console,
+    -- hovever it could be written to do something else with it
+    procedure onXML(integer hInst, sequence XML)
+        puts(1,XML)
+    end procedure
+
+    eebax_SetXMLEvent(eebax,routine_id("onXML"))
+</pre
+<p>Note that the XML event will be called multiple times for a single document.</p>
+<p>Call the eebax_StartDocument to start a new XML document then call XML creation routines until your document is finished. (see below for a complete list of XML creation routines).</p>
+<pre>
+        eebax_StartDocument(eebax)
+        -- Start a non-empty (must have closing tag) element
+        eebax_StartElement(eebax,"toplevel",{{"attribute1","value1"},{"attribute2","value2"}},0)
+        eebax_StartElement(eebax,"empty",{},1)
+        eebax_StartElement(eebax,"secondlevel",{},0)
+        eebax_Characters(eebax,"Character content")
+        eebax_EndElement(eebax,"secondlevel")
+        eebax_EndElement(eebax,"toplevel")
+        eebax_EndDocument(eebax)
+</pre>
+
+<a name="3"><h1>3 Reference</h1></a>
+<a name="3.1"><h2>3.1 Events</h2></a>
+
+<p>For each of the events below there is a "<code>eebax_Set<i>[eventname]</i>Event(integer hInst,integer RoutineID)</code>" procedure.
+
+<a name="StartDocument"><h3>StartDocument</h3></a>
+<code>onStartDocument(integer hInst)</code>
+<p>This event is raised when a new document starts</p>
+
+<a name="EndDocument"><h3>EndDocument</h3></a>
+<code>onEndDocument(integer hInst)</code>
+<p>This event is raised when a document ends</p>
+
+<a name="StartElement"><h3>StartElement</h3></a>
+<code>onStartElement(integer hInst,sequence Uri, sequence LocalName, sequence QName, sequence Atts)</code>
+<p>
+This event is raised when a new element starts. Atts is a sequence of attributes, for attribute x the following data can be retrieved:<br/>
+<ul>
+<li><code>Atts[x][EEBAX_ATTS_QNAME]</code> - The qualified name of the attribute</li>
+<li><code>Atts[x][EEBAX_ATTS_VALUE]</code> - The value of the attribute</li>
+<li><code>Atts[x][EEBAX_ATTS_URI]</code> - The URI for the attribute</li>
+<li><code>Atts[x][EEBAX_ATTS_LOCALNAME]</code> - The LocalName for the attribute</li>
+</ul>
+<p>Unless your using XML namespaces then you you should probably always use the QName (qualified name) and ignore the Uri and LocalName</q>
+</p>
+
+<a name="EndElement"><h3>EndElement</h3></a>
+<code>onEndElement(integer hInst,sequence Uri, sequence LocalName, sequence QName)</code>
+<p>This event is raised when a element ends. Unless your using XML namespaces then you you should probably always use the QName (qualified name) and ignore the Uri and LocalName</q>
+
+<a name="Characters"><h3>Characters</h3></a>
+<code>onCharacters(integer hInst,sequence Chars)</code>
+<p>This event is raised when character data is encountered</p>
+
+<a name="Comment"><h3>Comment</h3></a>
+<code>onComment(integer hInst,sequence Comment)</code>
+<p>This event is raised when a comment is encountered.</p>
+
+<a name="ParseError"><h3>ParseError</h3></a>
+<code>onParseError(integer hInst, integer ErrorNumber, sequence Description, integer LineNumber)</code>
+<p>This event is raised when a parseing error occurs.</p>
+<ul>
+<li><code>ErrorNumber</code> - numerical error code</li>
+<li><code>Description</code> - a textual description that could be shown to a user</li>
+<li><code>LineNumber</code> - the current line number, can be used for error reporting</li>
+</ul>
+
+<a name="IgnorableWhitespace"><h3>IgnorableWhitespace</h3></a>
+<code>onIgnorableWhitespace(integer hInst, sequence Whitespace)</code>
+<p>This event is raised when white space is encountered between elements. If you don't want to distinguish between whitespace and other character data then you should assign this event to the same handler as the Characters event.</p>
+
+<a name="ProcessingInstruction"><h3>ProcessingInstruction</h3></a>
+<code>onProcessingInstruction(integer hInst,sequence Target, sequence Data)</code>
+<p>This event is raised when a processing instruction is encountered.</p>
+
+<a name="StartPrefixMapping"><h3>StartPrefixMapping</h3></a>
+<code>onStartPrefixMapping(integer hInst,sequence Prefix, sequence Uri)</code>
+<p>This event is raised when a new namespace prefix mapping comes into scope. If your not using XML namespaces (and most of the time even if you are) you should ignore this event.</p>
+
+<a name="EndPrefixMapping"><h3>EndPrefixMapping</h3></a>
+<code>onEndPrefixMapping(integer hInst,sequence Prefix, sequence Uri)</code>
+<p>This event is raised when a namespace prefix mapping goes out of scope. If your not using XML namespaces (and most of the time even if you are) you should ignore this event.</p>
+
+<a name="XML"><h3>XML</h3></a>
+<code>onXML(integer hInst, sequence XML)</code>
+<p>This event is raised when ever a piece of XML is parsed or an XML creation routine is called.</p>
+
+<a name="3.2"><h2>3.2 General</h2></a>
+
+<a name="eebax_NewInstance"><h3>eebax_NewInstance</h3></a>
+<code>function eebax_NewInstance()</code>
+<p>Creates a new parser instance and returns a handle</p>
+<p><i>See also:</i> <code><a href="#eebax_DestroyInstance">eebax_DestroyInstance()</a></code>, <code><a href="#eebax_ResetInstance">eebax_ResetInstance()</a></code></p>
+
+<a name="eebax_DestroyInstance"><h3>eebax_DestroyInstance</h3></a>
+<code>procedure eebax_DestroyInstance(integer hInst)</code>
+<p>Destroys the instance and all its data structures</p>
+<p><i>See also:</i> <code><a href="#eebax_NewInstance">eebax_NewInstance()</a></code>, <code><a href="#eebax_ResetInstance">eebax_ResetInstance()</a></code></p>
+
+<a name="eebax_ResetInstance"><h3>eebax_ResetInstance</h3></a>
+<code>procedure eebax_ResetInstance(integer hInst)</code>
+<p>Resets the instance so that it can be used again. Once reset the instance will behave exactly as if it had just been created with eebax_NewInstance except all the events that have been set will be left in tact.</p>
+<p><i>See also:</i> <code><a href="#eebax_NewInstance">eebax_NewInstance()</a></code>, <code><a href="#eebax_DestroyInstance">eebax_DestroyInstance()</a></code></p>
+
+<a name="eebax_StartDocument"><h3>eebax_StartDocument</h3></a>
+<code>procedure eebax_StartDocument(integer hInst)</code>
+<p>Starts a new document (if you have allready used this instance then you must have either used <a href="#eebax_EndDocument">eebax_EndDocument()</a> or <a href="#eebax_ResetInstance">eebax_ResetInstance()</a>). Always call this before using <a href="#eebax_Parse">eebax_Parse()</a> or an of the XML creation routines.</p>
+<p><i>See also:</i> <code><a href="#eebax_EndDocument">eebax_EndDocument()</a></code></p>
+
+<a name="eebax_EndDocument"><h3>eebax_EndDocument</h3></a>
+<code>procedure eebax_EndDocument(integer hInst)</code>
+<p>Ends the current document. Should be called after a document has been parsed or created, will generate errors if the document is not complete.</p>
+<p><i>See also:</i> <code><a href="#eebax_StartDocument">eebax_StartDocument()</a></code></p>
+
+<a name="3.3"><h2>3.3 Parsing</h2></a>
+
+<a name="eebax_Parse"><h3>eebax_Parse</h3></a>
+<code>function eebax_Parse(integer hInst,sequence Data)</code>
+<p>Parses XML Data and generates appropriate events. Returns 0 if an error occurs or 1 if no error occurs during the parsing of Data, use the <a href="#ParseError">ParseError</a> event to get full error info. When reading in UTF-16 encoded documents you must use binary mode *NOT* text mode, UTF-8 *SHOULD* be ok with either.</p>
+
+<a name="3.4"><h2>3.4 XML Creation</h1></a>
+
+<a name="eebax_StartElement"><h3>eebax_StartElement</h3></a>
+<code>procedure eebax_StartElement(integer hInst, sequence name, sequence atts, integer empty)</code>
+<p>Starts a new element</p>
+<ul>
+<li><code>name</code> - a qualified name for the new element</li>
+<li><code>atts</code> - a list of attributes in the form of a sequence of {name,value} sequences were name is a qualified name</li>
+<li><code>empty</code> - a boolean value to indicate if the tag is empty (in which case it will be output in the form &lt;name atts/&gt;), if the empty flag is true then eebax_EndElement should not and can not be called for this element</li>
+</ul>
+<p>Namespace declarations can be supplied in the attribute list</p>
+<p><i>See also:</i> <code><a href="#eebax_EndElement">eebax_EndElement()</a></code></p>
+
+<a name="eebax_EndElement"><h3>eebax_EndElement</h3></a>
+<code>procedure eebax_EndElement(integer hInst, sequence name)</code>
+<p>Closes an element, name is a qualified name for the element being closed</p>
+<p><i>See also:</i> <code><a href="#eebax_StartElement">eebax_StartElement()</a></code></p>
+
+<a name="eebax_Characters"><h3>eebax_Characters</h3></a>
+<code>procedure eebax_Characters(integer hInst, sequence Chars)</code>
+<p>Adds Chars to the current document as character data. Chars should be unescaped character data.</p>
+
+<a name="eebax_ProcessingInstruction"><h3>eebax_ProcessingInstruction</h3></a>
+<code>procedure eebax_ProcessingInstruction(integer hInst, sequence Target, sequence Data)</code>
+<p>Generates a processing instruction</p>
+
+<a name="eebax_Comment"><h3>eebax_Comment</h3></a>
+<code>procedure eebax_Comment(integer hInst, sequence Comment)</code>
+<p>Adds Comment to the current document as a comment.</p>
+
+<a name="3.5"><h2>3.5 Utilities</h1></a>
+
+<a name="eebax_EncodeUTF8"><h3>eebax_EncodeUTF8</h3></a>
+<code>function eebax_EncodeUTF8(sequence Data)</code>
+<p>Encodes a unicode string where each character occupies one element of a sequence into a UTF-8 encoded string. If an error is encountered then an atom containing the position of the character that caused the error is returned. You do not need to use this function directly, it is called automatically from most of the XML creation routines.</p>
+<p><i>See also:</i> <code><a href="#eebax_DecodeUTF8">eebax_DecodeUTF8()</a></code></p>
+
+<a name="eebax_DecodeUTF8"><h3>eebax_DecodeUTF8</h3></a>
+<code>function eebax_DecodeUTF8(sequence Data)</code>
+<p>Decodes a UTF-8 encoded string so that each character occupies one element of a sequence. You do not need to use this function directly, it is called automatically from the xml_Parse routine.</p>
+<p><i>See also:</i> <code><a href="#eebax_EncodeUTF8">eebax_EncodeUTF8()</a></code></p>
+
+<a name="eebax_EncodeUTF16"><h3>eebax_EncodeUTF16</h3></a>
+<code>function eebax_EncodeUTF16(sequence Data)</code>
+<p>Encodes a unicode string where each character occupies one element of a sequence into a UTF-16 encoded string. If an error is encountered then an atom containing the position of the character that caused the error is returned. You do not need to use this function directly, it is called automatically from most of the XML creation routines.</p>
+<p><i>See also:</i> <code><a href="#eebax_DecodeUTF16">eebax_DecodeUTF16()</a></code></p>
+
+<a name="eebax_DecodeUTF16"><h3>eebax_DecodeUTF16</h3></a>
+<code>function eebax_DecodeUTF16(sequence Data)</code>
+<p>Decodes a UTF-16 encoded string so that each character occupies one element of a sequence. The first character of data should be the #FEFF marker (BOM). You do not need to use this function directly, it is called automatically from the xml_Parse routine.</p>
+<p><i>See also:</i> <code><a href="#eebax_EncodeUTF16">eebax_EncodeUTF16()</a></code></p>
+
+</body>
+</html>

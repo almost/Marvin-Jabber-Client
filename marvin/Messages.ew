@@ -1,0 +1,424 @@
+-- Message handler, handles reiving and displaying of messages (not sending, though maybe that should go in this file)
+-- Also handles ensuring that the user get's to read the message, even in the event of a complete system fubar :)
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+--5/Sep/2001: Changing it to store unclosed messages in a file
+
+include arcfour.e
+include log.ew
+include eebax.e
+include wndNotification\wndNotification_decs.ew
+include wndNotification\wndNotification_defs.ew
+
+--{id,jid,locked} a locked message window can not have any more messages added to it
+sequence MessageWindows
+MessageWindows = {}
+constant mWINID  = 1,
+         mJIDS    = 2,
+         mLOCKED = 3,
+         mSHOWN  = 4, --If a window is not show it should be show next time the sys tray icon is clicked
+         
+         BLANK_MESSAGE_WINDOW = {0,"",0,0}
+
+--list off messages which have not yet been displayed
+sequence CurrentMessages 
+CurrentMessages = {}
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+function ReadFile( sequence fName )
+    integer handle
+    sequence out
+    object data
+    handle = open( fName, "rb" )
+    if handle = -1 then return {} end if
+    out = {} data = {}
+    while sequence(data) do
+        out &= data
+        data = gets( handle )
+    end while
+    close( handle )
+    return out
+end function
+
+include wndMessage\wndMessage_decs.ew --see below for wndMessage_defs.ew
+
+procedure StoreMessages()
+    sequence xml,output
+    sequence user,salt
+    atom fn
+    
+    --Collect together all current messages, each message should be preceeded by it's length (as a 4 byte integer)
+    output = ""
+    for i = 1 to length(CurrentMessages) do
+        xml = message_GetXML(CurrentMessages[i])
+        output = output & int_to_bytes(length(xml))&xml
+    end for
+ 
+    --Encrypt the lot
+    salt = rand(repeat(256, 10)) - 1
+    output = salt&arcfour_encrypt(output,salt&jabber_Password())
+  
+    --Find out the users JID (without resource)
+    user = jabber_CurrentJID()
+    user = user[1..find('/',user)-1]
+    
+    --Make sure the users data directory exists
+    if createDirectory("data") then end if
+    if createDirectory("data\\" & user) then end if
+    
+    --Open up the users current message file
+    fn = open("data\\"&user&"\\messages.tmp","wb")
+    
+    --Write the encrypted messgaes to this file
+    puts(fn,output)
+    
+    --Close the file
+    close(fn)
+end procedure
+
+
+global procedure messages_MessageRead(sequence Message) --The *user* has closed the message, or replyed to it or something
+    atom loc
+    loc = message_Find(Message,CurrentMessages)
+    if loc != 0 then
+        CurrentMessages = CurrentMessages[1..loc-1]&CurrentMessages[loc+1..length(CurrentMessages)]
+        StoreMessages()
+    end if
+end procedure
+
+global procedure messages_MarkAllMessagesRead()
+    CurrentMessages = {}
+    StoreMessages()
+end procedure
+
+
+global procedure messages_WindowClosed(atom WinID)
+    atom loc
+    loc = sub_find(WinID,MessageWindows,mWINID)
+    if loc then
+        MessageWindows = MessageWindows[1..loc-1]&MessageWindows[loc+1..length(MessageWindows)]
+    end if
+end procedure
+
+global procedure messages_Send(sequence Message)
+    if settings_Get("MessageWin","EnableComposingEvent") then
+        Message[MESSAGE_X] = append(Message[MESSAGE_X],xmltree_Parse("<x xmlns='jabber:x:event'><composing/></x>"))
+    end if
+    if jabber_SendMessage(Message) then end if        
+    if settings_Get("Security","LogMessages") then
+        log_AddMessage(Message)
+    end if
+end procedure
+
+-- Returns {id,{events}}, the id element is the ID of the message that this event is in reply to (for feature negoitation (when body element is empty) the id element is meaningless)
+-- Returns -1 if no jabber:x;event element is found
+function GetMessageEvents(sequence Message)
+    sequence Atts, Children
+    sequence Events,ID
+    -- Check for message events
+    ID = ""
+    Events = {}
+    for x = 1 to length(Message[MESSAGE_X]) do
+        Atts = xmltree_GetAttributes(Message[MESSAGE_X][x])
+        for a = 1 to length(Atts) do
+            if equal(Atts[a][EEBAX_ATTS_LOCALNAME],"xmlns") then
+                if equal(Atts[a][EEBAX_ATTS_VALUE],"jabber:x:event") then
+                    Children = xmltree_GetChildren(Message[MESSAGE_X][x])
+                    for c = 1 to length(Children) do
+                        if atom(Children[c]) then
+                            if equal(xmltree_GetLocalName(Children[c]),"id") then
+                                ID = xmltree_GetChildren(Children[c])
+                                if length(ID) > 0 and sequence(ID[1]) then
+                                    ID = ID[1]
+                                else
+                                    ID = ""
+                                end if
+                            else
+                                Events = append(Events,xmltree_GetLocalName(Children[c]))
+                            end if
+                        end if
+                    end for
+                    return {ID,Events}
+                end if
+            end if
+        end for
+    end for
+    return -1
+end function
+
+global procedure messages_SendComposingEvent(sequence OrigMessage)
+    sequence Message
+    object Events
+    Events = GetMessageEvents(OrigMessage)
+    if sequence(Events) and find("composing",Events[2]) != 0 then
+        Message = message_GetBlank()
+        Message[MESSAGE_TYPE] = ""
+        Message[MESSAGE_TO] = OrigMessage[MESSAGE_FROM]
+        Message[MESSAGE_X] = append(Message[MESSAGE_X],xmltree_Parse("<x xmlns='jabber:x:event'><composing/><id>"&OrigMessage[MESSAGE_MID]&"</id></x>"))
+        if jabber_SendMessage(Message) then end if   
+    end if
+end procedure
+
+global procedure messages_ClearEvents(sequence OrigMessage)
+    sequence Message
+    object Events
+    Events = GetMessageEvents(OrigMessage)
+    if sequence(Events) and find("composing",Events[2]) != 0 then
+        Message = message_GetBlank()
+        Message[MESSAGE_TYPE] = ""
+        Message[MESSAGE_TO] = OrigMessage[MESSAGE_FROM]
+        Message[MESSAGE_X] = append(Message[MESSAGE_X],xmltree_Parse("<x xmlns='jabber:x:event'><id>"&OrigMessage[MESSAGE_MID]&"</id></x>"))
+        if jabber_SendMessage(Message) then end if   
+    end if
+end procedure
+
+global function messages_UnreadMessageCount()
+    return length(CurrentMessages)
+end function
+
+global function message_EnumJIDHiddenMessageWins()
+    sequence JIDs
+    JIDs = {}
+    for i = 1 to length(MessageWindows) do
+        if not MessageWindows[i][mSHOWN] then
+            -- I'm not sure what the behavour would be if there were more than one JID for the message window, but that shouldn't happen at the moment (multiple-user messages are never hidden)
+            JIDs = JIDs&MessageWindows[i][mJIDS]
+        end if
+    end for
+    return JIDs
+end function
+
+--Will return true if there are messages waiting for a click on the system tray
+global function messages_HiddenMessageWinCount()
+    atom count
+    count = 0
+    for i = 1 to length(MessageWindows) do
+        if not MessageWindows[i][mSHOWN] then
+            count += 1
+        end if
+    end for
+    return count
+end function
+
+-----------------------------------------------------------------------
+include wndMessage\wndMessage_defs.ew
+-----------------------------------------------------------------------
+
+global procedure messages_ShowHiddenMessages()
+    for i = 1 to length(MessageWindows) do
+        if not MessageWindows[i][mSHOWN] then
+            MessageWindows[i][mSHOWN] = 1
+            wndmessage_Open(MessageWindows[i][mWINID])
+            --Bring window to front
+            moveZOrder(MessageWindows[i][mWINID],HWND_TOPMOST)
+            moveZOrder(MessageWindows[i][mWINID],HWND_NOTOPMOST)
+
+            wndroster_UpdateItem(MessageWindows[i][mJIDS])
+        end if
+    end for
+end procedure
+
+-----------------------------------------------------------------------
+include shutdown.ew
+include systraymanage.ew
+-----------------------------------------------------------------------
+
+
+--Doesn't actualy display the message
+function NewMessageWindow(sequence JIDS)
+    atom win
+    win = wndmessage_Create()
+    MessageWindows = append(MessageWindows,BLANK_MESSAGE_WINDOW)
+    MessageWindows[length(MessageWindows)][mWINID]   = win
+    for i = 1 to length(JIDS) do
+        JIDS[i] = jabber_RemoveJIDResource(lower(JIDS[i]))
+    end for
+    MessageWindows[length(MessageWindows)][mJIDS]     = JIDS
+    MessageWindows[length(MessageWindows)][mLOCKED]  = settings_Get("MessageWin","DisplayInNewWindow")
+    if settings_Get("MessageWin","PopupNewMessages") then
+        MessageWindows[length(MessageWindows)][mSHOWN] = 1
+        wndmessage_Open(win)
+    else
+        MessageWindows[length(MessageWindows)][mSHOWN] = 0
+    end if
+    systraymanage_Update()
+    return length(MessageWindows)
+end function
+
+global function messages_FindMessageWindow(sequence JID)
+    JID = jabber_RemoveJIDResource(lower(JID))
+    for i = 1 to length(MessageWindows) do
+        if not MessageWindows[i][mLOCKED] then
+            if find(JID,MessageWindows[i][mJIDS]) != 0 then
+                return i
+                exit
+            end if
+        end if
+    end for
+    return 0
+end function
+
+global function messages_GetMessageWindow(sequence JID)
+    atom index
+    index = messages_FindMessageWindow(JID)
+    if index = 0 then
+        index = NewMessageWindow({JID})
+    end if
+    return index
+end function
+
+procedure DisplayMessage(sequence Message)
+    atom index
+    index = messages_GetMessageWindow(Message[MESSAGE_FROM])
+    wndmessage_AddMessage(MessageWindows[index][mWINID],Message)
+    wndmessage_SetComposingEvent(MessageWindows[index][mWINID],0)
+end procedure
+
+global procedure messages_ComposeMessage(sequence JIDs)
+    atom index,loc
+    if length(JIDs) = 0 then
+        --nothing to do
+    else
+        if length(JIDs) = 1 then
+            index = messages_GetMessageWindow(JIDs[1])
+        else
+            index = NewMessageWindow(JIDs)    
+        end if
+        wndmessage_SetRecipients(MessageWindows[index][mWINID],JIDs)
+        
+        MessageWindows[index][mSHOWN] = 1
+        wndmessage_Open(MessageWindows[index][mWINID])
+        
+        --The system tray will be showing the "waiting message" icon, update it
+        systraymanage_Update()
+        
+        setFocus(MessageWindows[index][mWINID])
+        
+        wndroster_UpdateItem(JIDs)        
+    end if
+end procedure
+
+procedure onMessage(sequence Message)
+    atom Window
+    object Events
+    object Sound
+    
+    if length(Message[MESSAGE_BODY]) = 0 then
+        Events = GetMessageEvents(Message)
+        if sequence(Events) and not equal(Message[MESSAGE_TYPE],"error") then
+            Window = messages_FindMessageWindow(Message[MESSAGE_FROM])
+            if Window != 0 then
+                if find("composing",Events[2]) != 0 then
+                    -- Ok, got a state change for the composing event
+                    wndmessage_SetComposingEvent(MessageWindows[Window][mWINID],1)
+                else
+                    wndmessage_SetComposingEvent(MessageWindows[Window][mWINID],0)
+                end if
+            end if
+        end if
+        message_Delete(Message)
+        return
+    end if
+    
+    CurrentMessages = append(CurrentMessages,Message)
+    StoreMessages()
+    DisplayMessage(Message)
+    --Play onmessage sound:
+    if  settings_Get("Sounds","Enable") then
+        Sound = settings_Get("Sounds","Message")
+        if sequence(Sound) and playSound(Sound) then end if
+    end if
+    
+    if settings_Get("Security","LogMessages") then
+        log_AddMessage(Message)
+    end if
+    
+    if settings_Get("Notification","MessageEnable") then
+        wndnotification_Show("Message from " & jabber_rosterGetNick(Message[MESSAGE_FROM]))
+    end if
+    
+    wndroster_UpdateItem(Message[MESSAGE_FROM])
+end procedure
+jabber_onMessage = routine_id("onMessage")
+
+--Reads messages stored in users messages.tmp file and checks if any should be displayed
+procedure ReadMessagesFromFile()
+    sequence messages,user,Message
+    atom len
+    atom msgxmltree
+    
+    CurrentMessages = {}
+    
+    --Find out the users JID (without resource)
+    user = jabber_CurrentJID()
+    user = user[1..find('/',user)-1]
+
+    messages = ReadFile("data\\"&user&"\\messages.tmp")
+    
+    if length(messages) = 0 then return end if
+    
+    --Decrypt and parse the messages
+    messages = arcfour_decrypt(messages[11..length(messages)],messages[1..10]&jabber_Password())
+    
+    while length(messages)>4 do
+        len = bytes_to_int(messages[1..4])
+        if length(messages) < 4+len or len < 1 then
+            exit
+        end if
+        msgxmltree = xmltree_Parse(messages[5..len+4])
+        if msgxmltree != 0 then
+            Message = message_Parse(msgxmltree)
+            xmltree_DeleteNode(msgxmltree)
+            if not message_Find(Message,CurrentMessages) then
+                CurrentMessages = append(CurrentMessages,Message)
+                DisplayMessage(Message)
+            end if
+        end if
+        messages = messages[len+5..length(messages)]
+    end while
+end procedure
+
+global procedure messages_PresenceChange(sequence JID)
+    JID = jabber_RemoveJIDResource(lower(JID))
+    for i = 1 to length(MessageWindows) do
+        -- Presence is only displayed on messages to single users (not multi-messages)
+        if length(MessageWindows[i][mJIDS]) = 1 and equal(JID,MessageWindows[i][mJIDS][1]) then
+            wndmessage_PresenceChange(MessageWindows[i][mWINID],JID)
+        end if
+    end for
+end procedure
+
+procedure onRecieved_Settings() --to be called upon connection when settings have been recieved, shows any messages stored in messages.tmp
+    ReadMessagesFromFile()
+end procedure
+settings_onRecieved(routine_id("onRecieved_Settings"))

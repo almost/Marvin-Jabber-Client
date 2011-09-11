@@ -1,0 +1,77 @@
+-- wndNotification window definitions
+-- Thomas Parslow (PatRat)
+-- tom@almostobsolete.net
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+--This window is not skinable
+include timers.ew
+include settings.ew
+
+constant SPI_GETWORKAREA = 48
+constant USER32 = open_dll("user32")
+constant SystemParametersInfo = define_c_proc(USER32,"SystemParametersInfoA",{C_ULONG,C_ULONG,C_ULONG,C_ULONG}),
+         SetFocus = define_c_proc(USER32,"SetFocus",{C_POINTER}),
+         GetFocus = define_c_func(USER32,"GetFocus",{},C_POINTER)
+
+atom ShownAt
+
+procedure timer()
+    if settings_Get("notification","timeout") != 0 and time() - ShownAt > settings_Get("notification","timeout") then
+        if w32Func( xShowWindow, { getHandle( wndNotification ), SW_HIDE } ) then end if    
+        StopTimerEvent(routine_id("timer"))
+    end if
+end procedure
+
+global procedure wndnotification_Show(sequence Text)    
+    sequence TextExtent,WorkArea
+    atom RECT
+    -- Set the formatting
+    setWindowBackColor(wndnotification_Text,settings_Get("notification","backcolor"))
+    setWindowBackColor(wndNotification,settings_Get("notification","backcolor"))
+    setFont(wndnotification_Text,settings_Get("notification","font"),settings_Get("notification","fontsize"),Normal)
+    -- Set the text
+    setText(wndnotification_Text,Text)
+    -- Get the size of the text
+    TextExtent = getTextExtent(wndnotification_Text,Text)
+    -- Get work area size
+    RECT = allocate(16)
+    c_proc(SystemParametersInfo,{SPI_GETWORKAREA,0,RECT,0})
+    WorkArea = peek4u({RECT,4})
+    free(RECT)
+    
+    if w32Func( xShowWindow, { getHandle( wndNotification ), SW_HIDE } ) then end if    
+    
+    -- Position and size window and text box
+    setRect(wndNotification,WorkArea[3]-TextExtent[1]-7,WorkArea[4]-TextExtent[2]-3,TextExtent[1]+6,TextExtent[2]+3,0)
+    setRect(wndnotification_Text,1,1,TextExtent[1]+2,TextExtent[2]+2,0)
+    -- Show the window
+    GetTimerEvent(routine_id("timer"),500)
+    ShownAt = time()
+    if w32Func( xShowWindow, { getHandle( wndNotification ), SW_SHOWNA } ) then end if    
+end procedure
+
+procedure onclick()
+    if w32Func( xShowWindow, { getHandle( wndNotification ), SW_HIDE } ) then end if    
+    StopTimerEvent(routine_id("timer"))
+end procedure
+onClick[wndNotification] = routine_id("onclick")

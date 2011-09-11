@@ -1,0 +1,1655 @@
+-- Euphoria Jabber Library
+-- Thomas Parslow) (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001-2002 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+include win32lib.ew
+include async.ew
+include eebax.e
+include xmltree.e
+include sha1.e
+include message.ew
+include get.e
+
+constant SM_GETHOSTBYNAME     = WM_USER + 6,
+         SM_SOCKETEVENT       = WM_USER + 5
+         
+constant wndEvents = create(Window, "", 0,0, 0,0, 0, {} ) -- Used to recieve ASYNC events, never shown
+
+--Events
+global atom    jabber_onConnect,
+               jabber_onDisconnect,
+               jabber_onError,              --(ERROR_CODE,SERVER_MESSAGE(0 or string))
+               jabber_onMessage,            --(Message) --see message.ew for format
+               jabber_onRecieveRosterItems, --(FROM,{ROSTER,ROSTER,...}) The only guaranteed items in ROSTER are {JID,NAME}
+               jabber_onRosterUpdate,       --(JID,UPDATE_TYPE,OLD_VALUE) old value is only used in case of update type of status
+               jabber_onRequestSubscription,--(JID,REASON)
+               jabber_onIQ,                 --(FROM,ID,TYPE,NS,XML)
+               jabber_onStateChange,        --(State,Text)
+               jabber_onShowStateChange,    --(State,Text) the showstate of the user
+               jabber_onSendBytes,          --(Bytes) raised whenever bytes are sent to the server, for debug output
+               jabber_onReceiveBytes       --(Bytes) raised whenever bytes are recieved from the server, for debug output
+               
+               
+global constant  JABBER_ROSTERUPDATE_STATUS       = 1,
+                 JABBER_ROSTERUPDATE_ADD          = 2,
+                 JABBER_ROSTERUPDATE_UPDATE       = 3,
+                 JABBER_ROSTERUPDATE_REMOVE       = 4,
+                 JABBER_ROSTERUPDATE_SUBSCRIPTION = 5
+jabber_onConnect             = -1
+jabber_onDisconnect          = -1
+jabber_onError               = -1
+jabber_onMessage             = -1
+jabber_onRosterUpdate        = -1
+jabber_onRequestSubscription = -1
+jabber_onIQ                  = -1
+jabber_onStateChange         = -1
+jabber_onShowStateChange     = -1
+jabber_onSendBytes           = -1
+jabber_onReceiveBytes       = -1
+
+--Variables
+atom     Socket          --The socket connected to the Jabber server
+Socket = 0
+
+sequence ServerAddress   --Jabber server to connect to
+sequence ServerName      --The name that the jabber server sees itself as (could be different from ServerAddress if DNS SRV records are being used)
+atom     Port            --Port to use
+Port = 5222              --The default Jabber port, should not need to be changed
+sequence Username        --Username JID=Username@ServerName
+sequence Password        --Password
+sequence Resource        --Jabber resource
+integer  Priority        --The resources priority
+sequence Nick            --Nickname
+ServerAddress = "" ServerName = "" Username = "" Password ="" Resource = "" Priority = 1 Nick = ""
+
+atom NewAcount           --1 if this is a new acount that should be created, this flag is cleared once the acount has been created
+
+atom DownstreamEEBAX, -- Parser instance for xml being recieved from the server
+     UpstreamEEBAX    -- Parse instance for xml being sent to the server
+     
+atom DownstreamEEBAXDepth
+
+--SHOW STATE
+
+global constant JABBER_SHOWSTATE_NOCHANGE        = 0, --Leave showstate on current value
+                JABBER_SHOWSTATE_OFFLINE         = 1,
+                JABBER_SHOWSTATE_HIDE            = 2, 
+                JABBER_SHOWSTATE_AVAILABLE       = 3,
+                JABBER_SHOWSTATE_CHAT            = 4,
+                JABBER_SHOWSTATE_AWAY            = 5,
+                JABBER_SHOWSTATE_XA              = 6,
+                JABBER_SHOWSTATE_DND             = 7
+            
+                
+global constant JABBER_SHOW_STATES = {"offline","hidden","available","chat","away","xa","dnd"},
+                JABBER_SHOW_STATES_FRIENDLY = {"Offline","Hidden","Available","Free For Chat","Away","Extended Away","Do Not Disturb"}
+
+atom ShowState
+ShowState = JABBER_SHOWSTATE_AVAILABLE
+sequence OnlineStatus
+OnlineStatus = "Available"
+
+--Roster format
+--{JID,Name,subscribedto,subscribedfrom,ask,groups}
+constant NEW_ROSTER_ITEM         = {"","",0,0,0,0,{},{}}
+constant ROSTER_JID              = 1, --String
+         ROSTER_NICK             = 2, --String
+         ROSTER_SUBSCRIPTIONTO   = 3, --Boolean
+         ROSTER_SUBSCRIPTIONFROM = 4, --Boolean
+         ROSTER_REMOVE           = 5, --Boolean, when set it means that this item should be removed
+         JABBER_ROSTER_ASK       = 6, --Tristate:
+         ROSTER_GROUPS           = 7, --{String,String,String,...}
+         ROSTER_RESOURCES        = 8, --{NAME,PRIORITY,SHOW,STATUS}
+          ROSTER_RESOURCE_NAME     = 1,
+          ROSTER_RESOURCE_PRIORITY = 2,
+          ROSTER_RESOURCE_SHOW     = 3, --SHOW STATE
+          ROSTER_RESOURCE_STATUS   = 4,  --String
+         
+         NEW_ROSTER_RESOURCE_ITEM = {"",1,JABBER_SHOWSTATE_OFFLINE,"normal"}   
+--       ROSTER_SHOW             = 9, --SHOW STATE
+--       ROSTER_STATUS           = 10  --String
+
+global constant JABBER_ROSTER_ASK_NONE       =0,
+          JABBER_ROSTER_ASK_SUBSCRIBE  =1,  
+          JABBER_ROSTER_ASK_UNSUBSCRIBE=2
+atom RosterLoaded
+RosterLoaded = 0
+sequence Roster
+Roster = {}
+
+--Service format
+--{JID,NAME,NS list,key,callback}
+constant SERVICE_JID             = 1,
+         --SERVICE_NAME            = 2,
+         --SERVICE_NS              = 3,
+         SERVICE_KEY             = 2,
+         SERVICE_INSTRUCTIONS    = 3,
+         SERVICE_REGCALLBACK     = 4 --Callback for a procedure that accepts (sequence JID,sequence Fields (list of {name,current value} pairs),sequence Instructions) 
+         --SERVICE_SHOWSTATE       = 4
+constant NEW_SERVICE = {"","","",-1}--,JABBER_SHOWSTATE_OFFLINE}
+atom ServicesLoaded
+ServicesLoaded = 0
+sequence Services
+Services = {}
+
+-- Browse Data Format
+--{JID,Name,Type,Subtype,NS List,Children,Data Source}
+constant BROWSE_JID             = 1,
+         BROWSE_NAME            = 2,
+         BROWSE_TYPE            = 3,
+         BROWSE_SUBTYPE         = 4,
+         BROWSE_NS              = 5, --List of namespaces supported item
+         BROWSE_CHILDREN        = 6,
+         BROWSE_DATASOURCE      = 7  -- The JID which supplied this information
+constant NEW_BROWSE = {"","","","",{},{},""}
+sequence Browse
+Browse = {}
+
+atom     Initialized     --Set to 1 when the Jabber library has been initialized
+Initialized=0
+
+sequence PrivateDataCallbacks -- {{NS,callback},..}
+PrivateDataCallbacks = {}
+
+--Server state variables
+sequence SessionID --NOT A JID, this is the id given in the opening stream element
+
+--STATE
+global atom     jabber_State
+--Go up in icrements of 10, then between states can be added and checked for
+global constant JABBER_S_CLOSED            = 1,
+                JABBER_S_CONNECTING        = 2,
+                JABBER_S_REGISTERING       = 3,  --Registering a new acount
+                JABBER_S_GETTINGAUTHINFO   = 4,
+                JABBER_S_AUTHENTICATING    = 5,
+                JABBER_S_RETRIEVING        = 6,
+                JABBER_S_CONNECTED         = 7,
+                JABBER_S_DISCONNECTING     = 8
+global constant JABBER_STATE_TEXT = {"Connection closed","Connecting","Registering","Getting Auth Requirments",
+                                     "Authenticating","Retrieving Roster","Connected","Disconnecting"}
+jabber_State = JABBER_S_CLOSED
+         
+         
+--ERROR CODES
+global constant JABBER_ERRCLASS_FATAL   = 1,
+                JABBER_ERRCLASS_WARNING = 2
+global constant JABBER_ERR_HOSTLOOKUP_FAILED      = 1, --Was unable to to get the HOSTENT information
+                JABBER_ERR_CONNECT_FAILED         = 2, --Unable to make a connection to the host
+                JABBER_ERR_REGISTER_FAILED        = 3, --Unable to register new acount
+                JABBER_ERR_AUTHENTICATION_FAILED  = 4, --An authentication error was returned, either username or password is invalid
+                JABBER_ERR_CONNECTION_LOST        = 5, --The connection was lost
+                JABBER_ERR_ROSTER_ERROR           = 6, --Cannot retrieve roster
+                JABBER_ERR_SERVICES_ERROR         = 7  --Cannot retrieve services
+global constant JABBER_ERRMESSAGES  = {"Host Lookup Failed","Connect Failed","Registration Failed","Authentication Failed",
+                                       "Connection Lost","Unable to Retrieve Roster","Unable to Retrieve Services"}
+global constant JABBER_ERRCLASSES   = {JABBER_ERRCLASS_FATAL,JABBER_ERRCLASS_FATAL,JABBER_ERRCLASS_FATAL,JABBER_ERRCLASS_FATAL,
+                                       JABBER_ERRCLASS_FATAL,JABBER_ERRCLASS_WARNING,JABBER_ERRCLASS_WARNING}
+
+
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+procedure RaiseEvent(atom event,object params)
+    if event != -1 then call_proc(event,params) end if
+end procedure
+
+procedure ChangeState(atom state)
+    jabber_State = state
+    RaiseEvent(jabber_onStateChange,{state,JABBER_STATE_TEXT[state]})
+end procedure
+
+procedure RaiseError(atom ErrorNum,object ServerError)
+    if jabber_State != JABBER_S_DISCONNECTING then --if we're disconnecting anyway then why show an error?
+        RaiseEvent(jabber_onError,{ErrorNum,ServerError})
+    end if
+    if JABBER_ERRCLASSES[ErrorNum] = JABBER_ERRCLASS_FATAL then
+        async_Close(Socket,0)
+        RaiseEvent(jabber_onDisconnect,{})
+        ChangeState(JABBER_S_CLOSED)
+    end if
+end procedure
+
+--The SendData and ReadData functions provide a layer between the jabber lib and the winsock lib where the raw bytes can be captured for debug output
+function ReadData()
+    object raw
+    raw = async_GetData(Socket)
+    if length(raw) > 0 then
+        RaiseEvent(jabber_onReceiveBytes,{raw})
+    end if
+    return raw
+end function
+
+procedure SendData(sequence raw)
+    RaiseEvent(jabber_onSendBytes,{raw})
+    if async_SendData(Socket,raw) then end if
+end procedure
+
+-- TODO: This is going to have to be replaced with some sort of access to the upstream parser instance or something
+global function jabber_SendRaw(sequence raw)
+    if jabber_State > JABBER_S_CONNECTING and jabber_State < JABBER_S_DISCONNECTING then
+        SendData(raw)
+        return 1
+    else
+        return 0
+    end if
+end function
+
+constant WHITESPACE = " \t"
+global procedure jabber_SendKeepAlive()
+    if jabber_State = JABBER_S_CONNECTED then    
+        SendData({WHITESPACE[rand(length(WHITESPACE))]})
+    end if
+end procedure
+
+--return {user,server,resource}
+global function jabber_SplitJID(sequence JID)
+    sequence user
+    atom loc
+    JID = lower(JID)
+    loc = find('@',JID)
+    if loc = 0 or length(JID) < loc+1 then
+        --return {JID,"",""}
+        user = ""
+    else
+        user = JID[1..loc-1]
+    end if
+    JID = JID[loc+1..length(JID)]
+    loc = find('/',JID)
+    if loc = 0 or length(JID) < loc+1 then
+        return {user,JID,""}
+    end if 
+    return {user,JID[1..loc-1],JID[loc+1..length(JID)]}
+end function
+
+global function jabber_JoinJID(sequence SplitJID)
+    sequence ret
+    ret = ""
+    if length(SplitJID[1]) > 0 then
+        ret = SplitJID[1]&"@"
+    end if
+    ret &= SplitJID[2]
+    if length(SplitJID[3]) > 0 then
+        ret = ret&"/"&SplitJID[3]
+    end if
+    return lower(ret)
+end function
+
+global function jabber_RemoveJIDResource(sequence JID)
+    JID = jabber_SplitJID(JID)
+    if length(JID[1]) = 0 then
+        return JID[2]
+    else
+        return JID[1]&"@"&JID[2]
+    end if
+end function
+
+function LocateRosterPosition(sequence JID)
+    sequence temp
+    JID = lower(JID)
+    for i = 1 to length(Roster) do
+        if equal(lower(Roster[i][ROSTER_JID]),JID) then
+            return i
+        end if
+    end for
+    if find('/',JID) != 0 then
+        --ok, lets try a search without the resource identifier
+        JID = JID[1..find('/',JID)-1]
+        for i = 1 to length(Roster) do
+            if equal(lower(Roster[i][ROSTER_JID]),JID) then
+                return i
+            end if
+        end for
+    else
+        --try finding this JID listed with a different resource
+        for i = 1 to length(Roster) do
+            temp = lower(Roster[i][ROSTER_JID])
+            if find('/',temp) != 0 then
+                temp = temp[1..find('/',temp)-1]
+            end if
+            if equal(temp,JID) then
+                return i
+            end if
+        end for
+    end if
+    return 0
+end function
+
+global procedure jabber_AcceptSubscription(sequence JID)
+    eebax_StartElement(UpstreamEEBAX,"presence",{
+                                                {"to",JID},
+                                                {"from",Username&"@"&ServerName&"/"&Resource},
+                                                {"type","subscribed"}},1)
+end procedure
+
+global procedure jabber_DeclineSubscription(sequence JID)
+    eebax_StartElement(UpstreamEEBAX,"presence",{
+                                                {"to",JID},
+                                                {"from",Username&"@"&ServerName&"/"&Resource},
+                                                {"type","unsubscribed"}},1)
+end procedure
+
+--Set and gets
+
+--If tojid is an atom then address the presence packet to the server
+procedure SendPresence(object tojid)
+    sequence ShowElement,Attributes
+    if jabber_State < JABBER_S_RETRIEVING and jabber_State >= JABBER_S_DISCONNECTING then
+        return
+    end if
+    
+
+    Attributes = {}
+    if ShowState = JABBER_SHOWSTATE_HIDE then
+        Attributes = append(Attributes,{"type","unavailable"})
+    end if
+    if sequence(tojid) then
+        Attributes = append(Attributes,{"to",tojid})
+    end if
+    eebax_StartElement(UpstreamEEBAX,"presence",Attributes,0)
+    
+    if ShowState != JABBER_SHOWSTATE_HIDE and ShowState != JABBER_SHOWSTATE_AVAILABLE then
+        eebax_StartElement(UpstreamEEBAX,"show",{},0)
+        eebax_Characters(UpstreamEEBAX,JABBER_SHOW_STATES[ShowState])
+        eebax_EndElement(UpstreamEEBAX,"show")
+    end if
+
+    eebax_StartElement(UpstreamEEBAX,"status",{},0)
+    eebax_Characters(UpstreamEEBAX,OnlineStatus)
+    eebax_EndElement(UpstreamEEBAX,"status")
+    
+    eebax_StartElement(UpstreamEEBAX,"priority",{},0)
+    eebax_Characters(UpstreamEEBAX,sprint(Priority))
+    eebax_EndElement(UpstreamEEBAX,"priority")
+
+    eebax_EndElement(UpstreamEEBAX,"presence")
+end procedure
+
+--Set the show state
+global procedure jabber_SetShowState(atom show,object text)    
+    if show = JABBER_SHOWSTATE_NOCHANGE then
+        show = ShowState
+        text = OnlineStatus
+    end if
+    
+    if atom(text) then
+        text = JABBER_SHOW_STATES_FRIENDLY[show]
+    end if
+    
+    ShowState = show
+    OnlineStatus = text
+    
+    SendPresence(0)
+    
+    RaiseEvent(jabber_onShowStateChange,{ShowState,OnlineStatus})
+end procedure
+
+global procedure jabber_SetPriority(integer priority)
+    Priority = priority
+    SendPresence(0)
+end procedure
+
+global function jabber_GetShowState()
+    return {ShowState,OnlineStatus}
+end function
+
+--Roster managment
+
+procedure UpdateRoster(sequence RosterItem)
+    -- Send an iq element containing a query element containing a item element containing group elements
+    eebax_StartElement(UpstreamEEBAX,"iq",{{"type","set"}},0)
+    eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:roster"}},0)
+
+    if RosterItem[ROSTER_REMOVE] then
+        eebax_StartElement(UpstreamEEBAX,"item",{
+                                             {"jid",RosterItem[ROSTER_JID]},
+                                             {"name",RosterItem[ROSTER_NICK]},
+                                             {"subscription","remove"}
+                                             },0)
+    else
+        eebax_StartElement(UpstreamEEBAX,"item",{
+                                             {"jid",RosterItem[ROSTER_JID]},
+                                             {"name",RosterItem[ROSTER_NICK]}
+                                             },0)
+    end if
+    
+    for i = 1 to length(RosterItem[ROSTER_GROUPS]) do
+        eebax_StartElement(UpstreamEEBAX,"group",{},0)
+        eebax_Characters(UpstreamEEBAX,RosterItem[ROSTER_GROUPS][i])
+        eebax_EndElement(UpstreamEEBAX,"group")
+    end for
+    
+    eebax_EndElement(UpstreamEEBAX,"item")
+    eebax_EndElement(UpstreamEEBAX,"query")
+    eebax_EndElement(UpstreamEEBAX,"iq")
+end procedure
+
+--Exists return 1 if item exists or 0 if not
+global function jabber_rosterExists(sequence JID)
+    return LocateRosterPosition(JID)!=0
+end function
+
+function GetPrimaryResource(sequence JID) --internal, returns an index to resource with highest priority that is not offline, will return 0 if the user is offline
+    integer loc,primary
+    loc = LocateRosterPosition(JID)
+    primary = 0
+    if loc != 0 then
+        for i = 1 to length(Roster[loc][ROSTER_RESOURCES]) do
+            if Roster[loc][ROSTER_RESOURCES][i][ROSTER_RESOURCE_SHOW] != JABBER_SHOWSTATE_OFFLINE and
+            (primary = 0 or Roster[loc][ROSTER_RESOURCES][i][ROSTER_RESOURCE_PRIORITY] > Roster[loc][ROSTER_RESOURCES][primary][ROSTER_RESOURCE_PRIORITY]) then
+                primary = i
+            end if
+        end for
+    end if
+    return primary
+end function
+
+--Returns name of primary resource or -1 if there is none (this would mean that the user should be considered offline)
+global function jabber_rosterGetPrimaryResource(sequence JID)
+    integer loc
+    object ret
+    loc = LocateRosterPosition(JID)
+    ret = GetPrimaryResource(JID)
+    if ret != 0 then
+        return Roster[loc][ROSTER_RESOURCES][ret][ROSTER_RESOURCE_NAME]
+    else
+        return -1
+    end if
+end function
+
+global procedure jabber_RequestSubscription(sequence JID,object Reason)
+    if atom(Reason) or length(Reason) = 0 then 
+        Reason = "Normal Subscription Request"
+    end if
+    eebax_StartElement(UpstreamEEBAX,"presence",{
+                                                {"to",JID},
+                                                {"from",Username&"@"&ServerName&"/"&Resource},
+                                                {"type","subscribe"}
+                                                },0)
+    eebax_StartElement(UpstreamEEBAX,"reason",{},0)
+    eebax_Characters(UpstreamEEBAX,Reason)
+    eebax_EndElement(UpstreamEEBAX,"reason")
+    eebax_EndElement(UpstreamEEBAX,"presence")
+end procedure
+
+--Reason is a a reason to give for requesting subscription
+global procedure jabber_rosterAdd(sequence JID,sequence Name,sequence Groups,object Reason)
+    sequence RosterItem
+    RosterItem = NEW_ROSTER_ITEM
+    RosterItem[ROSTER_JID]    = JID
+    RosterItem[ROSTER_NICK]   = Name
+    RosterItem[ROSTER_GROUPS] = Groups
+    UpdateRoster(RosterItem)
+    jabber_RequestSubscription(JID,Reason)
+end procedure
+
+global procedure jabber_rosterRemove(sequence JID)
+    atom junk
+    atom RosterPos
+    sequence RosterItem
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return --not my problem, programer should have checked that it existed
+    end if
+    RosterItem = Roster[RosterPos]
+    RosterItem[ROSTER_REMOVE] = 1
+    UpdateRoster(RosterItem)
+    
+    eebax_StartElement(UpstreamEEBAX,"presence",{
+                                                {"to",JID},
+                                                {"from",Username&"@"&ServerName&"/"&Resource},
+                                                {"type","unsubscribe"}
+                                                },1)
+end procedure
+
+--return a list of JID of all items in the roster
+global function jabber_EnumRosterItems()
+    sequence ret
+    ret = {}
+    for i = 1 to length(Roster) do
+        ret = append(ret,Roster[i][ROSTER_JID])
+    end for
+    return ret
+end function
+
+--Name
+global function jabber_rosterGetNick(sequence JID)
+    atom RosterPos
+    sequence sJID
+    sJID = jabber_SplitJID(JID)
+    
+    if equal(lower(sJID[1]),lower(Username)) and equal(lower(sJID[2]),lower(ServerName)) then
+        return Nick
+    end if
+    
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return JID
+    end if
+    if length(Roster[RosterPos][ROSTER_NICK]) = 0 then
+        return Roster[RosterPos][ROSTER_JID]
+    else
+        return Roster[RosterPos][ROSTER_NICK]
+    end if
+end function
+
+global procedure jabber_rosterSetNick(sequence JID, sequence Name)
+    atom RosterPos
+    sequence RosterItem
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return --not my problem, programer should have checked that it existed
+    end if
+    Roster[RosterPos][ROSTER_NICK] = Name
+    UpdateRoster(Roster[RosterPos])
+end procedure
+
+--Groups, return -1 on error
+global function jabber_rosterGetGroups(sequence JID)
+    atom RosterPos
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return -1
+    end if
+    return Roster[RosterPos][ROSTER_GROUPS]
+end function
+
+global procedure jabber_rosterSetGroups(sequence JID, sequence Groups)
+    atom RosterPos
+    sequence RosterItem
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return --not my problem, programer should have checked that it existed
+    end if
+    Roster[RosterPos][ROSTER_GROUPS] = Groups
+    UpdateRoster(Roster[RosterPos])
+end procedure
+
+global function jabber_rosterGetStatus(sequence JID)
+    integer res,RosterPos
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return -1
+    end if
+    res = GetPrimaryResource(JID)
+    if res = 0 then
+        return {JABBER_SHOWSTATE_OFFLINE,JABBER_SHOW_STATES_FRIENDLY[JABBER_SHOWSTATE_OFFLINE]}
+    else
+        return {Roster[RosterPos][ROSTER_RESOURCES][res][ROSTER_RESOURCE_SHOW],Roster[RosterPos][ROSTER_RESOURCES][res][ROSTER_RESOURCE_STATUS]}
+    end if
+end function
+
+--subscription
+global function jabber_rosterGetSubscriptionTo(sequence JID)
+    atom RosterPos
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return 0
+    end if
+    return Roster[RosterPos][ROSTER_SUBSCRIPTIONTO]
+end function
+
+global function jabber_rosterGetSubscriptionFrom(sequence JID)
+    atom RosterPos
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return 0
+    end if
+    return Roster[RosterPos][ROSTER_SUBSCRIPTIONFROM]
+end function
+
+global function jabber_rosterGetAsk(sequence JID)
+    atom RosterPos
+    RosterPos = LocateRosterPosition(JID)
+    if RosterPos = 0 then
+        return -1
+    end if
+    return Roster[RosterPos][JABBER_ROSTER_ASK]
+end function
+
+global function jabber_rosterIsGateway(sequence JID)
+    atom loc
+    loc = sub_find(lower(jabber_RemoveJIDResource(JID)),Browse,BROWSE_JID)
+    if loc then
+        return equal(Browse[loc][BROWSE_TYPE],"service")
+    end if
+    return 0
+end function
+
+global function jabber_rosterEnumGroups()
+    sequence groups
+    groups = {}
+    for i = 1 to length(Roster) do
+        for n = 1 to length(Roster[i][ROSTER_GROUPS]) do
+            if not find(Roster[i][ROSTER_GROUPS][n],groups) then
+                groups = append(groups,Roster[i][ROSTER_GROUPS][n])
+            end if
+        end for
+    end for
+    return groups
+end function
+
+function ProccessRosterItem(atom ItemNode)
+    sequence Item,Atts,Groups,temp
+    atom loc
+    Item = NEW_ROSTER_ITEM
+    Atts = xmltree_GetAttributes(ItemNode)
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_LOCALNAME],"jid") then
+            Item[ROSTER_JID] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"name") then
+            Item[ROSTER_NICK] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"subscription") then
+            Item[ROSTER_SUBSCRIPTIONTO  ] = (equal(Atts[i][EEBAX_ATTS_VALUE],"both") or equal(Atts[i][EEBAX_ATTS_VALUE],"to"))
+            Item[ROSTER_SUBSCRIPTIONFROM] = (equal(Atts[i][EEBAX_ATTS_VALUE],"both") or equal(Atts[i][EEBAX_ATTS_VALUE],"from"))
+            Item[ROSTER_REMOVE]           =  equal(Atts[i][EEBAX_ATTS_VALUE],"remove")
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"ask") then
+            if equal(Atts[i][EEBAX_ATTS_VALUE],"subscribe") then
+                Item[JABBER_ROSTER_ASK]          = JABBER_ROSTER_ASK_SUBSCRIBE
+            elsif equal(Atts[i][EEBAX_ATTS_VALUE],"unsubscribe") then
+                Item[JABBER_ROSTER_ASK]          = JABBER_ROSTER_ASK_UNSUBSCRIBE
+            else
+                Item[JABBER_ROSTER_ASK]          = JABBER_ROSTER_ASK_NONE
+            end if
+        end if
+    end for
+    
+    Groups = xmltree_GetChildren(ItemNode)
+    for i = 1 to length(Groups) do
+        if atom(Groups[i]) then
+            temp = xmltree_GetChildren(Groups[i])
+            if length(temp) = 1 and sequence(temp[1]) then
+                Item[ROSTER_GROUPS] = append(Item[ROSTER_GROUPS],temp[1])
+            end if
+        end if
+    end for
+    
+    -- Check if this item is a gateway
+    loc = sub_find(jabber_RemoveJIDResource(Item[ROSTER_JID]),Browse,BROWSE_JID)
+    if loc then
+        Item[ROSTER_NICK] = Browse[loc][BROWSE_NAME]
+    end if
+    
+    return Item
+end function
+
+procedure ProccessBrowseResult(sequence DataSource, atom XML)
+    sequence data,Atts,Children,temp
+    atom loc
+
+    data = NEW_BROWSE
+    
+    data[BROWSE_TYPE] = xmltree_GetLocalName(XML)
+
+    -- Get Atts from Browse element
+    Atts = xmltree_GetAttributes(XML)
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_LOCALNAME],"type") then
+            data[BROWSE_SUBTYPE] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"jid") then
+            data[BROWSE_JID] = Atts[i][EEBAX_ATTS_VALUE]
+        elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"name") then
+            data[BROWSE_NAME] = Atts[i][EEBAX_ATTS_VALUE]
+        end if
+    end for
+    
+    data[BROWSE_DATASOURCE] = DataSource
+    
+    Children = xmltree_GetChildren(XML)
+    for i = 1 to length(Children) do
+        if atom(Children[i]) then
+            if equal(xmltree_GetLocalName(Children[i]),"ns") then
+                temp = xmltree_GetChildren(Children[i])
+                if length(temp) = 1 then
+                    data[BROWSE_NS] = append(data[BROWSE_NS],temp[1])
+                end if
+            else
+                -- Get Atts from IQ element
+                Atts = xmltree_GetAttributes(Children[i])
+                for n = 1 to length(Atts) do
+                    if equal(Atts[n][EEBAX_ATTS_LOCALNAME],"jid") then
+                        data[BROWSE_CHILDREN] = append(data[BROWSE_CHILDREN],Atts[n][EEBAX_ATTS_VALUE])
+                        exit
+                    end if
+                end for
+                
+                ProccessBrowseResult(DataSource,Children[i])
+            end if
+        end if
+    end for
+    
+    loc = sub_find(data[BROWSE_JID],Browse,BROWSE_JID)
+    if loc then
+       if not equal(lower(DataSource),lower(data[BROWSE_JID])) and 
+          equal(lower(Browse[loc][BROWSE_JID]),lower(Browse[loc][BROWSE_DATASOURCE])) and
+          not equal(lower(DataSource),lower(ServerName)) then
+            return
+       end if
+    end if
+
+    Browse = append(Browse,data)
+end procedure
+
+global function jabber_EnumServices()
+    sequence ret
+    ret = {}
+    for i = 1 to length(Browse) do
+        if equal(Browse[i][BROWSE_DATASOURCE],ServerName) and equal(Browse[i][BROWSE_TYPE],"service") then
+            ret = append(ret,Browse[i][BROWSE_JID])
+        end if
+    end for
+    return ret
+end function
+
+global function jabber_serviceGetNSs(sequence JID)  
+    atom loc
+    loc = sub_find(jabber_RemoveJIDResource(JID),Browse,BROWSE_JID)
+    if not loc then
+        return -1
+    end if
+    return Browse[loc][BROWSE_NS]
+end function
+
+global function jabber_serviceGetName(sequence JID)
+    atom loc
+    loc = sub_find(jabber_RemoveJIDResource(JID),Browse,BROWSE_JID)
+    if not loc then
+        return -1
+    end if
+    return Browse[loc][BROWSE_NAME]    
+end function
+
+global function jabber_serviceGetStatus(sequence JID)
+    atom ret
+    sequence curjid
+    atom res
+    JID = jabber_RemoveJIDResource(JID)
+
+    for i = 1 to length(Roster) do
+        if equal(lower(jabber_RemoveJIDResource(Roster[i][ROSTER_JID])),lower(JID)) then
+            res = GetPrimaryResource(Roster[i][ROSTER_JID])
+            if res then
+                return {Roster[i][ROSTER_RESOURCES][res][ROSTER_RESOURCE_SHOW],Roster[i][ROSTER_RESOURCES][res][ROSTER_RESOURCE_STATUS]}
+            end if
+        end if
+    end for
+    return {JABBER_SHOWSTATE_OFFLINE,JABBER_SHOW_STATES_FRIENDLY[JABBER_SHOWSTATE_OFFLINE]}
+end function
+
+global function jabber_serviceGetJID(sequence JID)
+    return jabber_RemoveJIDResource(JID)
+end function
+
+-- BEGIN Packet proccessing
+--Proccess a <message> element
+procedure ProccessMessage(atom Packet)
+    sequence Message,Atts,XMLNS,Children
+    sequence RosterItems
+    
+    Message = message_Parse(Packet)
+    
+    for i = 1 to length(Message[MESSAGE_X]) do
+        Atts = xmltree_GetAttributes(Message[MESSAGE_X][i])
+        XMLNS = ""
+        for n = 1 to length(Atts) do
+            if equal(Atts[n][EEBAX_ATTS_LOCALNAME],"xmlns") then
+                XMLNS = Atts[n][EEBAX_ATTS_VALUE]
+            end if
+        end for
+        --Here is where to put aditional X parsing that doesn't go in message.ew
+        if equal(XMLNS,"jabber:x:roster") then
+            Children = xmltree_GetChildren(Message[MESSAGE_X][i])
+            RosterItems = {}
+            for n = 1 to Children do
+                if atom(Children[i]) then
+                    if equal(xmltree_GetLocalName(Children[i]),"item") then
+                        RosterItems = append(RosterItems,ProccessRosterItem(Children[i]))
+                    end if
+                end if
+            end for
+            
+            RaiseEvent(jabber_onRecieveRosterItems,{Message[MESSAGE_FROM],RosterItems})
+            return
+        end if      
+    end for
+    
+    RaiseEvent(jabber_onMessage,{Message})
+    --(Message)
+end procedure
+
+--Proccess a <presence> element
+procedure ProccessPresence(atom Packet)
+    sequence Status,From,Type
+    object Show,Priority
+    atom RosterLoc,oldshow
+    atom ResourceLoc
+    sequence Atts,Children
+    
+    --First extract all the info from the <presence> element
+    Atts = xmltree_GetAttributes(Packet)
+    Type = ""
+    From = ""
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_LOCALNAME],"type") then
+            Type = Atts[i][EEBAX_ATTS_VALUE]
+         elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"from") then
+            From = jabber_SplitJID(Atts[i][EEBAX_ATTS_VALUE])
+         --elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"id") then
+         --   ID = Atts[i][EEBAX_ATTS_VALUE]
+        end if
+    end for
+    
+    Show = ""
+    Status = ""
+    Priority = 1
+    Children = xmltree_GetChildren(Packet)
+    for i = 1 to length(Children) do
+        if atom(Children[i]) then
+            if equal(xmltree_GetLocalName(Children[i]),"show") then
+                Show = xmltree_GetChildren(Children[i])
+                if length(Show) > 0 then
+                    Show = Show[1]
+                end if
+            elsif equal(xmltree_GetLocalName(Children[i]),"status") then
+                Status = xmltree_GetChildren(Children[i])
+                if length(Status) > 0 then
+                    Status = Status[1]
+                end if
+            elsif equal(xmltree_GetLocalName(Children[i]),"priority") then
+                Priority = xmltree_GetChildren(Children[i])
+                if length(Priority) > 0 then
+                    Priority = value(Priority[1])
+                    Priority = Priority[2]
+                end if
+            end if
+        end if
+    end for
+    
+    RosterLoc = LocateRosterPosition(jabber_JoinJID({From[1],From[2],""}))
+    if RosterLoc != 0 then
+        if equal(Type,"subscribed") then
+            Roster[RosterLoc][ROSTER_SUBSCRIPTIONTO] = 1
+            RaiseEvent(jabber_onRosterUpdate,{jabber_JoinJID({From[1],From[2],""}),JABBER_ROSTERUPDATE_SUBSCRIPTION,0})
+            Roster[RosterLoc][JABBER_ROSTER_ASK]          = JABBER_ROSTER_ASK_NONE
+        elsif equal(Type,"unsubscribed") then
+            Roster[RosterLoc][ROSTER_SUBSCRIPTIONTO] = 0
+            RaiseEvent(jabber_onRosterUpdate,{jabber_JoinJID({From[1],From[2],""}),JABBER_ROSTERUPDATE_SUBSCRIPTION,0})
+            Roster[RosterLoc][JABBER_ROSTER_ASK]          = JABBER_ROSTER_ASK_NONE
+        elsif equal(Type,"unavailable") or equal(Type,"") then
+            Show = find(Show,JABBER_SHOW_STATES)
+            
+            if Show = 0 then
+                if equal(Type,"unavailable")  then
+                    Show = JABBER_SHOWSTATE_OFFLINE
+                else
+                    Show = JABBER_SHOWSTATE_AVAILABLE
+                end if
+            end if
+
+            if length(Status) = 0 then
+                Status = JABBER_SHOW_STATES_FRIENDLY[Show]
+            end if
+            
+            ResourceLoc = sub_find(From[3],Roster[RosterLoc][ROSTER_RESOURCES],ROSTER_RESOURCE_NAME)
+            if ResourceLoc = 0 then             
+                Roster[RosterLoc][ROSTER_RESOURCES] = append(Roster[RosterLoc][ROSTER_RESOURCES],NEW_ROSTER_RESOURCE_ITEM)
+                ResourceLoc = length(Roster[RosterLoc][ROSTER_RESOURCES]    )
+            end if
+            
+            
+            oldshow = Roster[RosterLoc][ROSTER_RESOURCES][ResourceLoc][ROSTER_RESOURCE_SHOW]
+            --Now use that data to update roster
+            Roster[RosterLoc][ROSTER_RESOURCES][ResourceLoc][ROSTER_RESOURCE_NAME]     = From[3]
+            Roster[RosterLoc][ROSTER_RESOURCES][ResourceLoc][ROSTER_RESOURCE_SHOW]     = Show
+            Roster[RosterLoc][ROSTER_RESOURCES][ResourceLoc][ROSTER_RESOURCE_STATUS]   = Status
+            Roster[RosterLoc][ROSTER_RESOURCES][ResourceLoc][ROSTER_RESOURCE_PRIORITY] = Priority
+            
+            --(JID,UPDATE_TYPE)
+            RaiseEvent(jabber_onRosterUpdate,{jabber_JoinJID({From[1],From[2],""}),JABBER_ROSTERUPDATE_STATUS,oldshow})
+
+            --If you want to proccess presence notification from other resources on the same acount then here is where it should go...
+        end if
+    end if
+    if equal(Type,"subscribe") then
+        if jabber_rosterIsGateway(jabber_JoinJID({From[1],From[2],""})) or (RosterLoc != 0 and Roster[RosterLoc][ROSTER_SUBSCRIPTIONFROM]) then
+            jabber_AcceptSubscription(jabber_JoinJID({From[1],From[2],""}))
+        else
+            RaiseEvent(jabber_onRequestSubscription,{jabber_JoinJID({From[1],From[2],""}),Status})
+        end if
+    end if
+end procedure
+
+procedure Authenticate()
+    ChangeState(JABBER_S_GETTINGAUTHINFO)
+    --Lets send our username and password
+    eebax_StartElement(UpstreamEEBAX,"iq",{{"type","get"},{"id","AuthRequirments"}},0)
+    eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:auth"}},0)
+    eebax_StartElement(UpstreamEEBAX,"username",{},0)
+    eebax_Characters(UpstreamEEBAX,Username)
+    eebax_EndElement(UpstreamEEBAX,"username")
+    eebax_EndElement(UpstreamEEBAX,"query")
+    eebax_EndElement(UpstreamEEBAX,"iq")
+end procedure
+
+procedure ProccessAgents(sequence From, integer Query)
+    sequence Children,AgentChildren,Attributes,temp
+    integer idx
+    Children = xmltree_GetChildren(Query)
+    for i = 1 to length(Children) do
+        Browse = append(Browse,NEW_BROWSE)
+        idx = length(Browse)
+        Browse[idx][BROWSE_TYPE] = "service"
+        Browse[idx][BROWSE_DATASOURCE] = From
+        Attributes = xmltree_GetAttributes(Children[i])
+        for a = 1 to length(Attributes) do
+            if equal(Attributes[a][EEBAX_ATTS_LOCALNAME],"jid") then
+                Browse[idx][BROWSE_JID] = Attributes[a][EEBAX_ATTS_VALUE]
+            end if
+            AgentChildren = xmltree_GetChildren(Children[i])
+            for n = 1 to length(AgentChildren) do
+                if equal("name",xmltree_GetLocalName(AgentChildren[n])) then
+                    Browse[idx][BROWSE_NAME] = xmltree_GetChildren(AgentChildren[n])
+                    if length(Browse[idx][BROWSE_NAME]) = 1 and sequence(Browse[idx][BROWSE_NAME]) then
+                        Browse[idx][BROWSE_NAME] = Browse[idx][BROWSE_NAME][1]
+                    else
+                        Browse[idx][BROWSE_NAME] = ""
+                    end if
+                elsif equal("description",xmltree_GetLocalName(AgentChildren[n])) then
+                elsif equal("transport",xmltree_GetLocalName(AgentChildren[n])) then
+                    Browse[idx][BROWSE_NS] = append(Browse[idx][BROWSE_NS],"jabber:iq:gateway")
+                elsif equal("groupchat",xmltree_GetLocalName(AgentChildren[n])) then
+                    Browse[idx][BROWSE_TYPE] = "conference"
+                elsif equal("service",xmltree_GetLocalName(AgentChildren[n])) then
+                    Browse[idx][BROWSE_SUBTYPE] = xmltree_GetChildren(AgentChildren[n])
+                    if length(Browse[idx][BROWSE_SUBTYPE]) = 1 and sequence(Browse[idx][BROWSE_SUBTYPE]) then
+                        Browse[idx][BROWSE_SUBTYPE] = Browse[idx][BROWSE_SUBTYPE][1]
+                    else
+                        Browse[idx][BROWSE_SUBTYPE] = ""
+                    end if
+                elsif equal("register",xmltree_GetLocalName(AgentChildren[n])) then
+                    Browse[idx][BROWSE_NS] = append(Browse[idx][BROWSE_NS],"jabber:iq:register")
+                elsif equal("search",xmltree_GetLocalName(AgentChildren[n])) then
+                    Browse[idx][BROWSE_NS] = append(Browse[idx][BROWSE_NS],"jabber:iq:search")
+                end if
+            end for
+        end for
+    end for
+end procedure
+
+--Proccess a <iq> element
+procedure ProccessInfoQuery(integer Packet)
+    sequence Type,XMLNS,Atts,Children,From,ID,Error
+    object temp
+    atom Query
+    --roster
+    sequence RosterItems,Subscription
+    atom RosterLoc,loc
+    --Agent register
+    sequence Fields,Instructions
+
+    -- Get Atts from IQ element
+    Atts = xmltree_GetAttributes(Packet)
+    Type = ""
+    From = ""
+    ID   = ""
+    for i = 1 to length(Atts) do
+        if equal(Atts[i][EEBAX_ATTS_LOCALNAME],"type") then
+            Type = Atts[i][EEBAX_ATTS_VALUE]
+         elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"from") then
+            From = Atts[i][EEBAX_ATTS_VALUE]
+         elsif equal(Atts[i][EEBAX_ATTS_LOCALNAME],"id") then
+            ID = Atts[i][EEBAX_ATTS_VALUE]
+        end if
+    end for
+    
+    -- Find the query element
+    Children = xmltree_GetChildren(Packet)
+    Query = 0
+    for i = 1 to length(Children) do
+        if atom(Children[i]) then
+            if not equal(xmltree_GetLocalName(Children[i]),"error") then
+                Query = Children[i]
+            end if
+        end if
+    end for
+
+    XMLNS = ""    
+    if Query != 0 then
+        -- Get the namespace
+        Atts = xmltree_GetAttributes(Query)
+        for i = 1 to length(Atts) do
+            if equal(Atts[i][EEBAX_ATTS_LOCALNAME],"xmlns") then
+                XMLNS = Atts[i][EEBAX_ATTS_VALUE]
+            end if
+        end for
+    end if
+    
+    RaiseEvent(jabber_onIQ,{From,ID,Type,XMLNS,Packet})
+    
+    if equal(Type,"set") then
+        if Query != 0 then
+            if equal(XMLNS,"jabber:iq:roster") then
+                Children = xmltree_GetChildren(Query)
+                RosterItems = {}
+                for i = 1 to length(Children) do
+                    if atom(Children[i]) and equal(xmltree_GetLocalName(Children[i]),"item") then
+                        RosterItems = append(RosterItems,ProccessRosterItem(Children[i]))
+                    end if
+                end for
+
+                for i = 1 to length(RosterItems) do
+                    RosterLoc = LocateRosterPosition(RosterItems[i][ROSTER_JID])
+                    if RosterLoc = 0 then
+                        --Add item
+                        if not RosterItems[i][ROSTER_REMOVE] then
+                            Roster = append(Roster,RosterItems[i])
+                            RaiseEvent(jabber_onRosterUpdate,{RosterItems[i][ROSTER_JID],JABBER_ROSTERUPDATE_ADD,0})
+                        end if
+                    else
+                        --Make changed to item
+                        if RosterItems[i][ROSTER_REMOVE] then
+                            Roster = Roster[1..RosterLoc-1]&Roster[RosterLoc+1..length(Roster)]
+                            RaiseEvent(jabber_onRosterUpdate,{RosterItems[i][ROSTER_JID],JABBER_ROSTERUPDATE_REMOVE,0})
+                        else
+                            temp = Roster[RosterLoc][ROSTER_RESOURCES]
+                            Roster[RosterLoc] = RosterItems[i]
+                            Roster[RosterLoc][ROSTER_RESOURCES] = temp
+                            RaiseEvent(jabber_onRosterUpdate,{RosterItems[i][ROSTER_JID],JABBER_ROSTERUPDATE_UPDATE,0})
+                        end if
+                    end if
+                end for
+            elsif equal(XMLNS,"jabber:iq:browse") then
+                ProccessBrowseResult(From,Query)
+            end if
+        end if
+    elsif equal(Type,"get") then
+    elsif equal(Type,"result") then
+        if jabber_State = JABBER_S_REGISTERING then
+            -- A reply of type result means registration was successull, time to authenticate
+            NewAcount = 0
+            --Let's authenticate with the new acount
+            Authenticate()
+        elsif jabber_State = JABBER_S_GETTINGAUTHINFO then
+            -- NOTE: 0k auth is not yet supported
+            if Query != 0 then
+                Children = xmltree_GetChildren(Query)
+                temp = 0
+                for i = 1 to length(Children) do
+                    if atom(Children[i]) and equal(xmltree_GetLocalName(Children[i]),"digest") then
+                        -- Supports digest auth
+                        temp = 1
+                    end if
+                end for
+                ChangeState(JABBER_S_AUTHENTICATING)
+                eebax_StartElement(UpstreamEEBAX,"iq",{{"type","set"},{"id","Authenticate"}},0)
+                eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:auth"}},0)
+                eebax_StartElement(UpstreamEEBAX,"username",{},0)
+                eebax_Characters(UpstreamEEBAX,Username)
+                eebax_EndElement(UpstreamEEBAX,"username")
+                if temp then
+                    -- Digest auth
+                    eebax_StartElement(UpstreamEEBAX,"digest",{},0)
+                    eebax_Characters(UpstreamEEBAX,sha1_GetHash(SessionID&Password))
+                    eebax_EndElement(UpstreamEEBAX,"digest")
+                else
+                    -- Plaintext auth
+                    eebax_StartElement(UpstreamEEBAX,"password",{},0)
+                    eebax_Characters(UpstreamEEBAX,Password)
+                    eebax_EndElement(UpstreamEEBAX,"password")
+                end if
+                eebax_StartElement(UpstreamEEBAX,"resource",{},0)
+                eebax_Characters(UpstreamEEBAX,Resource)
+                eebax_EndElement(UpstreamEEBAX,"resource")
+                eebax_EndElement(UpstreamEEBAX,"query")
+                eebax_EndElement(UpstreamEEBAX,"iq")
+            else
+                RaiseError(JABBER_ERR_AUTHENTICATION_FAILED,0)
+            end if
+        elsif jabber_State = JABBER_S_AUTHENTICATING then
+            -- Not an error, must be a reply, which means we're loged in :)
+            ChangeState(JABBER_S_RETRIEVING)
+            
+            -- Request service list
+            eebax_StartElement(UpstreamEEBAX,"iq",{{"type","get"},{"to",ServerName},{"id","Services"}},0)
+            eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:agents"}},1)
+            eebax_EndElement(UpstreamEEBAX,"iq")
+            
+            -- Request roster
+            eebax_StartElement(UpstreamEEBAX,"iq",{{"type","get"},{"id","Roster"}},0)
+            eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:roster"}},1)
+            eebax_EndElement(UpstreamEEBAX,"iq")
+        elsif equal(XMLNS,"jabber:iq:private") then
+            if Query != 0 then
+                Children = xmltree_GetChildren(Query)
+                for i = 1 to length(Children) do
+                    if atom(Children[i]) then
+                        -- Find the NS of the private data
+                        Atts = xmltree_GetAttributes(Children[i])
+                        for j = 1 to length(Atts) do
+                            if equal(Atts[j][EEBAX_ATTS_LOCALNAME],"xmlns") then
+                                XMLNS = Atts[j][EEBAX_ATTS_VALUE]
+                                exit
+                            end if
+                        end for
+                        loc = sub_find(XMLNS,PrivateDataCallbacks,1)
+                        if loc != 0 then
+                            call_proc(PrivateDataCallbacks[loc][2],{XMLNS,Children[i]})
+                            PrivateDataCallbacks = PrivateDataCallbacks[1..loc-1]&PrivateDataCallbacks[loc+1..length(PrivateDataCallbacks)]
+                        end if
+                        -- Only one element of private data is sent per IQ
+                        exit
+                    end if
+                end for
+            end if
+        elsif equal(XMLNS,"jabber:iq:register") then
+            if Query != 0 then
+                --Send the registrion info to the callback set in jabber_GetRegistrationInfo
+                loc = sub_find(From,Services,SERVICE_JID)
+                if loc != 0 and Services[loc][SERVICE_REGCALLBACK] != -1 then
+                    Children = xmltree_GetChildren(Query)
+                    Fields = {}
+                    for i = 1 to length(Children) do
+                        if atom(Children[i]) then
+                            if equal(xmltree_GetLocalName(Children[i]),"key") then
+                                temp = xmltree_GetChildren(Children[i])
+                                if length(temp) = 1 and sequence(temp[1]) then
+                                    Services[loc][SERVICE_KEY] = temp[1]
+                                else
+                                    Services[loc][SERVICE_KEY] = ""
+                                end if
+                            elsif equal(xmltree_GetLocalName(Children[i]),"instructions") then
+                                temp = xmltree_GetChildren(Children[i])
+                                if length(temp) = 1 and sequence(temp[1]) then
+                                    Services[loc][SERVICE_INSTRUCTIONS] = temp[1]
+                                else
+                                    Services[loc][SERVICE_INSTRUCTIONS] = ""
+                                end if
+                            elsif equal(xmltree_GetLocalName(Children[i]),"registered") then
+                            else
+                                temp = xmltree_GetChildren(Children[i])
+                                if length(temp) = 1 and sequence(temp[1]) then
+                                    temp = temp[1]
+                                else
+                                    temp = ""
+                                end if
+                                Fields = append(Fields,{xmltree_GetLocalName(Children[i]),temp})
+                            end if
+                        end if
+                    end for
+
+                    call_proc(Services[loc][SERVICE_REGCALLBACK],{From,Fields,Services[loc][SERVICE_INSTRUCTIONS]})
+                end if
+            end if
+        elsif jabber_State = JABBER_S_RETRIEVING and equal(XMLNS,"jabber:iq:roster") and equal(ID,"Roster") then
+            if Query != 0 then
+                Children = xmltree_GetChildren(Query)
+                Roster = {}
+                for i = 1 to length(Children) do
+                    if atom(Children[i]) and equal(xmltree_GetLocalName(Children[i]),"item") then
+                        Roster = append(Roster,ProccessRosterItem(Children[i]))
+                    end if
+                end for
+
+                RosterLoaded = 1
+
+                if ServicesLoaded then
+                    ChangeState(JABBER_S_CONNECTED)
+                    -- Generated an onConnect event
+                    RaiseEvent(jabber_onConnect,{})
+                end if
+            end if
+        elsif jabber_State = JABBER_S_RETRIEVING and equal(XMLNS,"jabber:iq:agents") and equal(ID,"Services") then
+            if Query != 0 then
+                ProccessAgents(From, Query)
+
+                ServicesLoaded = 1
+
+                if RosterLoaded then
+                    ChangeState(JABBER_S_CONNECTED)
+                    -- Generated an onConnect event
+                    RaiseEvent(jabber_onConnect,{})
+                end if
+            end if
+        elsif equal(XMLNS,"jabber:iq:browse") then
+            if Query != 0 then
+                ProccessBrowseResult(From,Query)
+                
+                -- Although this following isn't used right now it does allow easily switching back to using iq:browse to get Services instead of iq:agents
+                if jabber_State = JABBER_S_RETRIEVING and equal(ID,"Services") then     
+                    ServicesLoaded = 1
+
+                    if RosterLoaded then
+                        ChangeState(JABBER_S_CONNECTED)
+                        -- Generated an onConnect event
+                        RaiseEvent(jabber_onConnect,{})
+                    end if
+                end if
+            end if
+        end if
+    elsif equal(Type,"error") then
+        Children = xmltree_GetChildren(Packet)
+        Error = ""
+        for i = 1 to length(Children) do
+            if atom(Children[i]) and equal(xmltree_GetLocalName(Children[i]),"error") then
+                Error = xmltree_GetChildren(Children[i])
+                if length(Error) > 0 and sequence(Error[1]) then
+                    Error = Error[1]
+                else
+                    Error = ""
+                end if
+                exit
+            end if
+        end for
+        if jabber_State = JABBER_S_REGISTERING then
+            --acount could not be created
+            --Lets extract the error element so we can present to the user an error message
+            async_Close(Socket,0)
+            ChangeState(JABBER_S_CLOSED)
+
+            if length(Error) = 0 then
+                RaiseError(JABBER_ERR_REGISTER_FAILED,0)
+            else
+                RaiseError(JABBER_ERR_REGISTER_FAILED,Error)
+            end if
+        elsif jabber_State = JABBER_S_AUTHENTICATING or jabber_State = JABBER_S_GETTINGAUTHINFO then
+            --authentication error, the user probably entered his/her password incorectly
+            --Lets extract the error element so we can present to the user an error message
+            async_Close(Socket,0)
+            ChangeState(JABBER_S_CLOSED)
+            if length(Error) = 0 then
+                RaiseError(JABBER_ERR_AUTHENTICATION_FAILED,0)
+            else
+                RaiseError(JABBER_ERR_AUTHENTICATION_FAILED,Error)
+            end if
+        elsif jabber_State = JABBER_S_RETRIEVING then
+            if equal(ID,"Roster")  then
+                Roster = {}
+                RosterLoaded = 1                
+
+                if ServicesLoaded then
+                    ChangeState(JABBER_S_CONNECTED)
+                    -- Generated an onConnect event
+                    RaiseEvent(jabber_onConnect,{})
+                end if
+                RaiseEvent(jabber_onError,{JABBER_ERR_ROSTER_ERROR,0})
+            elsif equal(ID,"Services") then
+                Services = {}
+                ServicesLoaded = 1
+
+                if RosterLoaded then
+                    ChangeState(JABBER_S_CONNECTED)
+                    -- Generated an onConnect event
+                    RaiseEvent(jabber_onConnect,{})
+                end if
+                RaiseEvent(jabber_onError,{JABBER_ERR_SERVICES_ERROR,0})
+            end if
+        elsif equal(XMLNS,"jabber:iq:private") then 
+            if Query != 0 then
+                Children = xmltree_GetChildren(Query)
+                for i = 1 to length(Children) do
+                    if atom(Children[i]) then
+                        -- Find the NS of the private data
+                        Atts = xmltree_GetAttributes(Children[i])
+                        for j = 1 to length(Atts) do
+                            if equal(Atts[j][EEBAX_ATTS_LOCALNAME],"xmlns") then
+                                XMLNS = Atts[j][EEBAX_ATTS_VALUE]
+                                exit
+                            end if
+                        end for
+                        loc = sub_find(XMLNS,PrivateDataCallbacks,1)
+                        if loc != 0 then
+                            call_proc(PrivateDataCallbacks[loc][2],{XMLNS,-1})
+                            PrivateDataCallbacks = PrivateDataCallbacks[1..loc-1]&PrivateDataCallbacks[loc+1..length(PrivateDataCallbacks)]
+                        end if
+                        -- Only one element of private data is sent per IQ
+                        exit
+                    end if
+                end for
+            end if
+        end if
+    end if
+end procedure
+
+-- Packet is an xmltree node
+procedure ProccessPacket(integer Packet)
+    sequence name
+    name = xmltree_GetLocalName(Packet)
+    if equal(name,"message") then
+        ProccessMessage(Packet)
+    elsif equal(name,"presence") then
+        ProccessPresence(Packet)
+    elsif equal(name,"iq") then
+        ProccessInfoQuery(Packet)
+    end if
+end procedure
+-- END Packet Proccessing
+
+--Get the registration info for a Service specified by JID
+global procedure jabber_GetRegistrationInfo(sequence JID,integer CallBack)
+    atom ServiceIdx
+    ServiceIdx = sub_find(jabber_RemoveJIDResource(JID),Services,SERVICE_JID)
+    if ServiceIdx = 0 then
+        Services = append(Services,NEW_SERVICE)
+        ServiceIdx = length(Services)
+        Services[ServiceIdx][SERVICE_JID] = JID
+    end if
+    Services[ServiceIdx][SERVICE_REGCALLBACK] = CallBack
+    eebax_StartElement(UpstreamEEBAX,"iq",{{"type","get"},{"id","reginfo_"&sprint(ServiceIdx)},{"to",Services[ServiceIdx][SERVICE_JID]}},0)
+    eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:register"}},1)
+    eebax_EndElement(UpstreamEEBAX,"iq")
+end procedure
+
+--Register with agent or service JID. Fields is a list of {name,value} pairs
+global procedure jabber_RegisterWithService(sequence JID,sequence Fields)
+    atom ServiceIdx
+    sequence iq
+    ServiceIdx = sub_find(jabber_RemoveJIDResource(JID),Services,SERVICE_JID)
+    if ServiceIdx != 0 and length(Services[ServiceIdx][SERVICE_KEY]) > 0 then
+        --We need to send the session key as well as the other fields
+        Fields = append(Fields,{"key",Services[ServiceIdx][SERVICE_KEY]})
+    end if
+    
+    eebax_StartElement(UpstreamEEBAX,"iq",{{"type","set"},{"id","reg_"&sprint(ServiceIdx)},{"to",JID}},0)
+    eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:register"}},0)
+    for i = 1 to length(Fields) do
+        if length(Fields[i][2]) > 0 then
+            eebax_StartElement(UpstreamEEBAX,Fields[i][1],{},0)
+            eebax_Characters(UpstreamEEBAX,Fields[i][2])
+            eebax_EndElement(UpstreamEEBAX,Fields[i][1])
+        else
+            eebax_StartElement(UpstreamEEBAX,Fields[i][1],{},1)
+        end if
+    end for
+    eebax_EndElement(UpstreamEEBAX,"query")
+    eebax_EndElement(UpstreamEEBAX,"iq")
+end procedure
+
+--UnRegister with agent or service JID
+global procedure jabber_UnregisterWithService(sequence JID)
+    jabber_RegisterWithService(JID,{{"remove",""}})
+    jabber_rosterRemove(JID)
+end procedure
+
+-- BEGIN EEBAX Events
+-- Downstream
+procedure onStartElement_Downstream(integer hInst,sequence Uri, sequence LocalName, sequence QName, sequence Atts)
+    if DownstreamEEBAXDepth = 0 then
+        -- Check for stream element
+        if equal(LocalName,"stream") then
+            for i = 1 to length(Atts) do
+                if equal(Atts[i][EEBAX_ATTS_LOCALNAME],"id") then
+                    SessionID = Atts[i][EEBAX_ATTS_VALUE]
+                end if
+            end for
+            if NewAcount then
+                --New acount, create it
+                ChangeState(JABBER_S_REGISTERING)
+                jabber_RegisterWithService(ServerName,{{"username",Username},{"password",Password},{"resource",Resource}})
+            else
+                --Existing acount, just log in
+                Authenticate()
+            end if
+        end if
+    else
+        if DownstreamEEBAXDepth = 1 then
+            -- A jabber packet is starting, we want xmltree to treat each packet as a document in it's own right
+            xmltree_onStartDocument(hInst)
+        end if
+        xmltree_onStartElement(hInst,Uri,LocalName,QName,Atts)
+    end if
+    DownstreamEEBAXDepth += 1
+end procedure
+
+procedure onEndElement_Downstream(integer hInst,sequence Uri, sequence LocalName, sequence QName)
+    DownstreamEEBAXDepth -= 1
+    if DownstreamEEBAXDepth = 0 then
+        -- TODO: Close connection
+    else
+        xmltree_onEndElement(hInst,Uri,LocalName,QName)
+        if DownstreamEEBAXDepth = 1 then
+            -- End of a jabber packet
+            ProccessPacket(xmltree_GetRootFromhInst(hInst))
+            xmltree_onEndDocument(hInst)
+        end if
+    end if
+end procedure
+
+procedure onCharacters_Downstream(integer hInst,sequence Chars)
+    xmltree_onCharacters(hInst,Chars)
+end procedure
+
+procedure onIgnorableWhitespace_Downstream(integer hInst,sequence Chars)
+    xmltree_onIgnorableWhitespace(hInst,Chars)
+end procedure
+
+procedure onParseError_Downstream(integer hInst, integer ErrorNumber, sequence Description, integer LineNumber)
+    puts(1,"EEBAX PARSE ERROR ON SERVER INPUT IN JABBER.EW\n"&Description&"\n")
+    eebax_ResetInstance(hInst)
+end procedure
+
+-- Upstream
+procedure onXML_Upstream(integer hInst, sequence XML)
+    -- Any XML outputed by the upstream instance of the parser should be sent straight to the server
+    if Socket != 0 then
+        SendData(XML)
+    end if
+end procedure
+
+procedure onParseError_Upstream(integer hInst, integer ErrorNumber, sequence Description, integer LineNumber)
+    puts(1,"EEBAX PARSE ERROR OUTPUTING XML IN JABBER.EW\n"&Description&"\n")
+    eebax_ResetInstance(hInst)
+end procedure
+
+DownstreamEEBAX = eebax_NewInstance()
+UpstreamEEBAX = eebax_NewInstance()
+-- Set up eebax parser events
+-- Downstream
+eebax_SetStartElementEvent(DownstreamEEBAX,routine_id("onStartElement_Downstream"))
+eebax_SetEndElementEvent(DownstreamEEBAX,routine_id("onEndElement_Downstream"))
+eebax_SetCharactersEvent(DownstreamEEBAX,routine_id("onCharacters_Downstream"))
+eebax_SetIgnorableWhitespaceEvent(DownstreamEEBAX,routine_id("onIgnorableWhitespace_Downstream"))
+eebax_SetParseErrorEvent(DownstreamEEBAX,routine_id("onParseError_Downstream"))
+-- Upstream
+eebax_SetXMLEvent(UpstreamEEBAX,routine_id("onXML_Upstream"))
+eebax_SetParseErrorEvent(UpstreamEEBAX,routine_id("onParseError_Upstream"))
+
+-- END EEBAX Events
+
+--Do any cleanup that is needed
+global function jabber_CleanUp()
+    if Initialized = 1 then
+        async_Close(Socket,0)
+        Initialized = 0
+        eebax_DestroyInstance(DownstreamEEBAX)
+        eebax_DestroyInstance(UpstreamEEBAX)
+        return 1
+    else
+        return 1
+    end if
+end function
+
+global procedure jabber_Disconnect(integer Immediate)
+    atom t
+    if Socket != 0 then
+        if jabber_State >= JABBER_S_REGISTERING and jabber_State <= JABBER_S_CONNECTED then
+            ChangeState(JABBER_S_DISCONNECTING)
+            eebax_EndElement(UpstreamEEBAX,"stream:stream")
+        else
+            ChangeState(JABBER_S_DISCONNECTING)
+            Immediate = 1
+        end if
+        
+        if not Immediate then
+            -- Wait for timeout (3 seconds)
+            t = time()
+            while time()-t <= 3 do
+                doEvents(0)
+                if jabber_State != JABBER_S_DISCONNECTING then
+                    return
+                end if
+            end while
+        end if
+            
+        --If the immediate flag is set then we should just terminate the connection, otherwise we'll wait for the matching </stream:stream> from the server
+        async_Close(Socket,0)
+        Socket = 0
+        RaiseEvent(jabber_onDisconnect,{})
+        ChangeState(JABBER_S_CLOSED)
+    end if
+end procedure
+
+procedure AsyncEvents(integer socket, integer event)
+    integer error
+    
+    if socket != Socket or jabber_State = JABBER_S_CLOSED then return end if
+    if event = ASYNC_CONNECTED then
+        -- TCP Stream to Jabber server connnected, send opening of XML document
+        eebax_ProcessingInstruction(UpstreamEEBAX,"xml","version='1.0'")
+        eebax_StartElement(UpstreamEEBAX,"stream:stream",{{"to",ServerName},{"xmlns","jabber:client"},{"xmlns:stream","http://etherx.jabber.org/streams"}},0)
+    elsif event = ASYNC_RECIEVED then
+        if eebax_Parse(DownstreamEEBAX,ReadData()) then end if
+    elsif event = ASYNC_CLOSE then
+        error = async_GetLastError(socket) 
+        ChangeState(JABBER_S_CLOSED)
+        if error = ASYNC_ERROR_LOOKUPFAILED then
+            RaiseError(JABBER_ERR_HOSTLOOKUP_FAILED,0)
+        elsif jabber_State = JABBER_S_CONNECTING then
+            RaiseError(JABBER_ERR_CONNECT_FAILED,0)
+        elsif jabber_State = JABBER_S_DISCONNECTING then
+            RaiseEvent(jabber_onDisconnect,{})
+        else
+            RaiseError(JABBER_ERR_CONNECTION_LOST,0)
+        end if
+    end if
+end procedure
+async_AddEventHandler(routine_id("AsyncEvents"))
+
+--Connect to the jabber server
+global function jabber_Connect(sequence server, sequence username, sequence password, sequence resource, atom newacount)
+    object ValTemp
+    if jabber_State != JABBER_S_CLOSED then
+        return 0
+    end if
+    
+    -- (RE)Initilize the XML parser instances
+    eebax_ResetInstance(DownstreamEEBAX)
+    eebax_StartDocument(DownstreamEEBAX)
+    eebax_ResetInstance(UpstreamEEBAX)
+    eebax_StartDocument(UpstreamEEBAX)
+    
+    DownstreamEEBAXDepth = 0
+
+    Port = 5222
+    if find(':',server) then
+        ServerAddress = server[1..find(':',server)-1]
+        ValTemp = value(server[find(':',server)+1..length(server)])
+        if ValTemp[1] = GET_SUCCESS  then
+            Port = ValTemp[2]
+        end if
+    else
+        ServerAddress = server
+    end if
+    
+    --If a full JID is given in username then assume the part after the @ is the name the server sees itself as (should have a DNS SRV record pointing to ServerAddress)
+    if find('@',username) then
+        Username = username[1..find('@',username)-1]
+        ServerName = username[find('@',username)+1..length(username)]
+    else
+        Username = username
+        ServerName = ServerAddress
+    end if
+    Password = password
+    Resource = resource
+    Nick = Username
+    NewAcount = newacount
+    Priority = 1
+    
+    Roster = {}
+    RosterLoaded = 0
+    Services = {}
+    ServicesLoaded = 0
+    Browse = {}
+    
+    ChangeState(JABBER_S_CONNECTING)
+    Socket = async_Connect(ServerAddress,Port)
+    if Socket = SOCKET_ERROR then
+        ChangeState(JABBER_S_CLOSED)
+        return 0
+    end if
+    --Now we just sit back and wait for a reply..
+    return 1
+end function
+
+--Send a message to a JID
+--see messag.ew for message format
+global function jabber_SendMessage(sequence Message)
+    --TODO: get message.e to use eebax
+    SendData(message_GetXML(Message))
+    return 1
+end function
+
+--Store some xml on the server, the top element of the xml should have a xmlns attribute
+global procedure jabber_StorePrivateData(sequence XML)
+    eebax_StartElement(UpstreamEEBAX,"iq",{{"type","set"},{"id","store private"}},0)
+    eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:private"}},0)
+    -- If there is an error in the XML it should be caught by the onParseError event
+    if eebax_Parse(UpstreamEEBAX,XML) then
+        eebax_EndElement(UpstreamEEBAX,"query")
+        eebax_EndElement(UpstreamEEBAX,"iq")
+    end if
+end procedure
+
+--Retrieve stored xml
+--When the data arives it is sent to the callback function:
+--CallBackFunc(sequence NS, atom XML) --on error xml will be -1
+--Not supporting requesting of multiple namespaces at the same time
+global procedure jabber_RetrievePrivateData(sequence NS, integer CallBack)
+    PrivateDataCallbacks = append(PrivateDataCallbacks,{NS,CallBack})
+    eebax_StartElement(UpstreamEEBAX,"iq",{{"type","get"},{"id","retrieve "&NS}},0)
+    eebax_StartElement(UpstreamEEBAX,"query",{{"xmlns","jabber:iq:private"}},0)
+    eebax_StartElement(UpstreamEEBAX,NS[1..find(':',NS)-1],{{"xmlns",NS}},1)
+    eebax_EndElement(UpstreamEEBAX,"query")
+    eebax_EndElement(UpstreamEEBAX,"iq")
+end procedure
+
+global function jabber_CurrentJID()
+    return Username&"@"&ServerName&"/"&Resource
+end function
+
+global function jabber_CurrentServer()
+    return ServerName
+end function
+
+global function jabber_Password()
+    return Password
+end function
+
+global function jabber_GetEEBAX()
+    return UpstreamEEBAX
+end function

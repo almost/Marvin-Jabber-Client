@@ -1,0 +1,259 @@
+--System Tray Icon
+--23/June/2001
+--Thomas Parslow (PatRat)
+--patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--Yes, I am aware that it's called the Taskbar Notification Area but I've always called it the System Tray and I'm not gonna stop now so there! ;)
+include win32lib.ew
+constant SHELL32 = open_dll("shell32")
+constant Shell_NotifyIcon = define_c_func(SHELL32,"Shell_NotifyIconA",{C_ULONG,C_POINTER},C_ULONG)
+constant ExtractIcon = define_c_func(SHELL32,"ExtractIconA",{C_ULONG,C_POINTER,C_ULONG},C_ULONG)
+constant NIM_ADD     = 0,
+         NIM_MODIFY  = 1,
+         NIM_DELETE  = 2,
+         NIF_MESSAGE = 1,
+         NIF_ICON    = 2,
+         NIF_TIP     = 4
+
+constant SM_SYSTRAY  = WM_USER + 5
+
+constant USER32 = open_dll("user32")
+constant CreateIconIndirect = define_c_func(USER32,"CreateIconIndirect",{C_POINTER},C_POINTER)
+
+constant WM_TASKBARCREATED = w32Func( RegisterWindowMessage, { acquire_mem(0, "TaskbarCreated") } )
+
+sequence Ico
+Ico = {}
+sequence Tip
+Tip = {}
+sequence hWnd
+hWnd = {}
+sequence WinID
+WinID = {}
+sequence Event --routine ids for procedures that accept (index,event)
+Event = {}
+sequence Visible
+Visible = {}
+
+sequence OldonEvent --{winid,oldoneventhandler}
+OldonEvent = {}
+
+
+--how did i live without this function?:)
+function sub_find(object fnd, sequence in, integer sub_element)
+    for i = 1 to length(in) do
+        if equal(fnd,in[i][sub_element]) then
+            return i
+        end if
+    end for
+    return 0
+end function
+
+constant sizeofNOTIFYICONDATA = 4+4+4+4+4+4+64
+function struct_NOTIFYICONDATA(atom hwnd, atom id, object flags, atom callbackmessage, atom icon, object tip)
+    atom mem
+    
+    if sequence(flags) then
+        flags = or_all(flags)
+    end if
+    mem = allocate(sizeofNOTIFYICONDATA)
+    --cbSize
+    poke4(mem,sizeofNOTIFYICONDATA)
+    --hWnd
+    poke4(mem+4,hwnd)
+    --uID
+    poke4(mem+8,id)
+    --uFlags
+    poke4(mem+12,flags)
+    --uCallbackMessage
+    poke4(mem+16,callbackmessage)
+    --hIcon
+    poke4(mem+20,icon)
+    --szTip
+    poke(mem+24,repeat(0,64))
+    if sequence(tip) then
+        if length(tip) > 63 then
+            tip = tip[1..63]
+        end if
+        poke(mem+24,tip)
+    end if
+    
+
+    return mem
+end function
+
+procedure Update(integer index)
+    atom lpdata
+    lpdata = struct_NOTIFYICONDATA(hWnd[index],index,{NIF_ICON,NIF_TIP},0,Ico[index],Tip[index])
+    if c_func(Shell_NotifyIcon,{NIM_MODIFY,lpdata}) then end if
+    free(lpdata)
+end procedure
+
+global function systray_Create(integer winid) 
+    atom hwnd
+    hwnd = getHandle(winid)
+    hWnd &= hwnd
+    Event &= -1
+    Ico &= 0
+    Tip = append(Tip,"")
+    Visible &= 0
+    WinID &= winid
+    return length(hWnd)
+end function
+
+atom onevent_rid --initialized just below onevent
+
+global procedure systray_Show(integer index)
+    atom lpdata
+    if onEvent[WinID[index]] != onevent_rid then
+        if not sub_find(WinID[index],OldonEvent,1) then
+            OldonEvent = append(OldonEvent,{WinID[index],onEvent[WinID[index]]})
+        end if
+        onEvent[WinID[index]] = onevent_rid
+    end if
+
+    if not Visible[index] then      
+        lpdata = struct_NOTIFYICONDATA(hWnd[index],index,{NIF_MESSAGE,NIF_ICON,NIF_TIP},SM_SYSTRAY,Ico[index],Tip[index])
+        if c_func(Shell_NotifyIcon,{NIM_ADD,lpdata}) then end if
+        free(lpdata)
+        Visible[index] = 1
+    end if
+end procedure
+
+global procedure systray_Hide(integer index)
+    atom lpdata
+    if Visible[index] then
+        lpdata = struct_NOTIFYICONDATA(hWnd[index],index,{NIF_ICON,NIF_TIP},0,0,0)
+        if c_func(Shell_NotifyIcon,{NIM_DELETE,lpdata}) then end if
+        free(lpdata)
+        Visible[index] = 0
+    end if
+end procedure
+
+procedure onevent( integer event, atom wParam, atom lParam)
+    atom loc
+    if event = SM_SYSTRAY then
+        if wParam > 0 and wParam <= length(hWnd) then
+            if Event[wParam] != -1 then
+                call_proc(Event[wParam],{wParam,lParam})
+            end if
+        end if
+    elsif event = WM_TASKBARCREATED then
+        loc = find(getSelf(),WinID)
+        if loc != 0 then
+            systray_Hide(loc)
+            systray_Show(loc)
+        end if
+    end if
+    --Pass the event on
+    loc = sub_find(getSelf(),OldonEvent,1)
+    if loc and OldonEvent[loc][2] != -1 then
+        call_proc(OldonEvent[loc][2],{event,wParam,lParam})
+    end if
+end procedure
+onevent_rid = routine_id("onevent")
+
+global procedure systray_SetTip(integer index, sequence tip)
+    if length(tip) > 63 then
+        tip = tip[1..63]
+    end if      
+    if not equal(Tip[index],tip) then
+        Tip[index] = tip
+        Update(index)
+    end if
+end procedure
+
+global function systray_LoadIcon(sequence icon) 
+    atom pstr,hicon
+    pstr = allocate_string(icon)
+    hicon = c_func(ExtractIcon,{0,pstr,0})
+    free(pstr)
+    return hicon
+end function
+
+global procedure systray_SetIcon(integer index, object icon)
+    if not equal(icon,Ico[index]) then
+        if sequence(icon) then
+            icon = systray_LoadIcon(icon)
+        end if
+        Ico[index] = icon
+        Update(index)
+    end if
+end procedure
+
+global procedure systray_SetEvent(integer index, atom rid)
+    Event[index] = rid
+end procedure
+
+--create a 16 color icon from a bitmap, mask color is {255,0,255}
+--NOTE: This function can only create 16 color icons, bitmaps can be supplied with more but they will be converted
+global function systray_Bitmap2Icon(atom src) --src must be a bitmap
+    atom maskDC, srcDC,hMaskBmp,hMaskPrevBmp,Success,OrigColor,colorBmp,colorDC,colorPrevBmp
+    
+    sequence size
+    
+    atom ICONINFO
+    
+    atom ret
+    
+    size = getCtlSize( src )
+    
+    srcDC = getDC(src)
+    maskDC = w32Func( xCreateCompatibleDC, {srcDC} )
+    colorDC = w32Func( xCreateCompatibleDC, {srcDC} )
+    -- Create monochrome bitmaps for the mask-related bitmaps:
+    hMaskBmp = w32Func( xCreateBitmap, {size[1], size[2], 1, 1, 0} )
+    colorBmp  = w32Func( xCreateCompatibleBitmap, {srcDC,size[1], size[2]} )
+    
+    hMaskPrevBmp = w32Func( xSelectObject, {maskDC, hMaskBmp} )
+    colorPrevBmp = w32Func( xSelectObject, {colorDC, colorBmp} )
+
+    Success = w32Func( xBitBlt, {colorDC, 0, 0, size[1], size[2], srcDC, 0, 0, SRCCOPY} )
+
+    -- Create mask: set background color of source to transparent color.
+    OrigColor = w32Func( xSetBkColor, {colorDC, rgb(255,0,255)} )
+    Success = w32Func( xBitBlt, {maskDC, 0, 0, size[1], size[2], colorDC, 0, 0, SRCCOPY} )
+    Success = w32Func( xBitBlt, {colorDC, 0, 0, size[1], size[2], colorDC, 0, 0, SRCCOPY} )
+    Success = w32Func( xBitBlt, {colorDC, 0, 0, size[1], size[2], maskDC, 0, 0, SRCINVERT} )
+        
+    -- restore the original color
+    Success = w32Func( xSetBkColor, {colorDC, OrigColor} )
+    
+    Success = w32Func( xSelectObject, {maskDC, hMaskPrevBmp} )
+    Success = w32Func( xSelectObject, {colorDC, colorPrevBmp} )
+    Success = w32Func( xDeleteDC, {maskDC} )
+    Success = w32Func( xDeleteDC, {colorDC} )
+    
+    ----
+    ICONINFO = allocate(20)
+    --{bool icon, hotspotx,hotspoty,hbmMask,hbmColor)
+    releaseDC(src)
+    poke4(ICONINFO,{1,0,0,hMaskBmp,colorBmp})
+    ret = c_func(CreateIconIndirect,{ICONINFO})
+    free(ICONINFO)
+    Success = w32Func( xDeleteObject, {hMaskBmp} )
+    Success = w32Func( xDeleteObject, {colorBmp} )
+    return ret
+end function

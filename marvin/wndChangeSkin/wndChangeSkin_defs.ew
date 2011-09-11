@@ -1,0 +1,72 @@
+-- wndChangeSkin window definitions
+-- Thomas Parslow (PatRat)
+-- patrat@rat-software.com
+
+-- --------------------------------------------------------------------------
+--
+-- License
+--
+-- The contents of this file are subject to the Jabber Open Source License
+-- Version 1.0 (the "License").  You may not copy or use this file, in either
+-- source code or executable form, except in compliance with the License.  You
+-- may obtain a copy of the License at http://www.jabber.com/license/ or at
+-- http://www.opensource.org/.  
+--
+-- Software distributed under the License is distributed on an "AS IS" basis,
+-- WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+-- for the specific language governing rights and limitations under the
+-- License.
+--
+-- Copyrights
+-- 
+-- Copyright (c) Thomas Parslow 2001 unless otherwise stated
+-- 
+-- --------------------------------------------------------------------------
+
+
+--This window is not skinable for obvious reasons.
+
+procedure Reload()
+    eraseItems(wndchangeskin_SkinList)
+    addItem(wndchangeskin_SkinList,skinx_EnumSkins())
+end procedure
+wndchangeskin_private_RidReload = routine_id("Reload")
+
+procedure onresize(atom style, atom x, atom y)
+    --resize all the controls
+    setRect(wndchangeskin_SkinList,10,10,x-20,y-45,0)
+    setRect(wndchangeskin_OK,x-255,y-35,75,25,0)
+    setRect(wndchangeskin_Cancel,x-170,y-35,75,25,0)
+    setRect(wndchangeskin_Apply,x-85,y-35,75,25,0)
+end procedure
+
+procedure SetSkin()
+    object SkinResult
+    SkinResult = skinx_LoadSkin(getItem(wndchangeskin_SkinList,getIndex(wndchangeskin_SkinList)))
+    if sequence(SkinResult) then
+        ShowError("Unable to load skin: " & SkinResult)
+    else
+        settings_Save("Skin","Last",getItem(wndchangeskin_SkinList,getIndex(wndchangeskin_SkinList)))
+    end if
+end procedure
+
+procedure onClick_OK()
+    SetSkin()
+    wndchangeskin_Close()
+end procedure
+
+procedure onClick_Apply()
+    SetSkin()
+end procedure
+
+procedure Event(atom id, sequence event)
+    if equal(event,"changeskin") then
+        wndchangeskin_Open()
+    end if
+end procedure
+events_SetHandler(0,routine_id("Event"))
+
+onClick[wndchangeskin_OK] = routine_id("onClick_OK")
+onClick[wndchangeskin_Apply] = routine_id("onClick_Apply")
+onClick[wndchangeskin_Cancel] = routine_id("wndchangeskin_Close")
+onResize[wndChangeSkin] = routine_id("onresize")

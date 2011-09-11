@@ -1,0 +1,11 @@
+without warning
+include alphablend.ew
+include win32lib.ew
+
+constant Window1 = create( Window, "Alpha Blending Demo", 0, 0, 0, 200, 100, 0 )
+
+alphablend_SetWinAlpha(getHandle(Window1),128) --50% transparancy
+--alphablend_SetWinTransColor(getHandle(Window1),rgb(212,208,200)) --The color of the window background :)
+
+WinMain( Window1, Normal )
+
